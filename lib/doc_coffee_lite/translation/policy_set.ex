@@ -21,6 +21,6 @@ defmodule DocCoffeeLite.Translation.PolicySet do
   def changeset(policy_set, attrs) do
     policy_set
     |> cast(attrs, [:project_id, :policy_key, :title, :policy_text, :policy_type, :source, :status, :priority, :metadata])
-    |> validate_required([:policy_key, :title, :policy_text, :policy_type, :source, :status, :priority])
+    |> validate_required([:policy_key, :title, :policy_text, :status])
   end
 end

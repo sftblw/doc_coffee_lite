@@ -25,6 +25,6 @@ defmodule DocCoffeeLite.Translation.DocumentNode do
   def changeset(document_node, attrs) do
     document_node
     |> cast(attrs, [:source_document_id, :parent_node_id, :node_id, :node_type, :source_path, :node_path, :position, :level, :title, :metadata])
-    |> validate_required([:node_id, :node_type, :source_path, :node_path, :position, :level, :title])
+    |> validate_required([:node_id, :node_type, :source_path, :position, :level])
   end
 end

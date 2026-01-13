@@ -95,16 +95,73 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   end
 
   defp process_unit(run, group, unit, strategy) do
+    Logger.info("Processing unit #{unit.id} (strategy: #{strategy})")
+    # 1. Mark as translating (quick DB update)
+    {:ok, unit} = set_unit_status(unit, "translating")
+
+    # 2. Perform translation
+    Logger.info("Calling LLM for unit #{unit.id}...")
+    translation_result =
+      case strategy do
+        "llm" ->
+          llm_translate(run, unit)
+
+        _ ->
+          Logger.info("Using noop strategy for unit #{unit.id}")
+          {unit.source_text || "", unit.source_markup || "", %{}}
+      end
+
+    {text, _markup, _resp} = translation_result
+    Logger.info("Translation completed for unit #{unit.id} (length: #{String.length(text)})")
+
+    # 3. Save result and update status
+    Logger.info("Saving translation result for unit #{unit.id}...")
     Repo.transaction(fn ->
-      with {:ok, unit} <- set_unit_status(unit, "translating"),
-           {:ok, _block} <- upsert_block_translation(run, unit, strategy),
-           {:ok, unit} <- set_unit_status(unit, "translated"),
+      with {:ok, block} <- save_translation_result(run, unit, translation_result, strategy),
+           _ = Logger.info("Block saved: #{block.id}"),
+           {:ok, _unit} <- set_unit_status(unit, "translated"),
            {:ok, group} <- advance_group_cursor(group, unit) do
         group
       else
-        {:error, reason} -> Repo.rollback(reason)
+        {:error, reason} -> 
+          Logger.error("Failed to save unit #{unit.id}: #{inspect(reason)}")
+          Repo.rollback(reason)
       end
     end)
+  end
+
+  defp save_translation_result(run, unit, {text, markup, resp}, strategy) do
+    sanitized_resp = 
+      case resp do
+        %{"raw" => raw} when is_binary(raw) -> %{"raw_summary" => String.slice(raw, 0, 1000)}
+        %{} = map -> Map.take(map, ["role", "content", "status", "usage"])
+        _ -> %{}
+      end
+
+    attrs = %{
+      translation_run_id: run.id,
+      translation_unit_id: unit.id,
+      status: "translated",
+      translated_text: text,
+      translated_markup: markup,
+      placeholders: unit.placeholders || %{},
+      llm_response: sanitized_resp,
+      metrics: %{},
+      metadata: %{"strategy" => strategy, "source_hash" => unit.source_hash}
+    }
+
+    try do
+      %BlockTranslation{}
+      |> BlockTranslation.changeset(attrs)
+      |> Repo.insert(
+        on_conflict: {:replace_all_except, [:id, :inserted_at]},
+        conflict_target: [:translation_run_id, :translation_unit_id]
+      )
+    rescue
+      e ->
+        Logger.error("DATABASE INSERT EXCEPTION: #{inspect(e)}")
+        {:error, e}
+    end
   end
 
   defp load_state(run_id, group_id) do
@@ -178,45 +235,29 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     {:ok, %{unit | status: status}}
   end
 
-  defp upsert_block_translation(run, unit, strategy) do
-    {translated_text, translated_markup, llm_response} =
-      case strategy do
-        "llm" ->
-          llm_translate(run, unit)
+  defp notify([]), do: :ok
+  defp notify(notifications), do: Logger.info("Notifications: #{inspect(notifications)}") # Simplified for Lite
 
-        _ ->
-          {unit.source_text || "", unit.source_markup || "", %{}}
-      end
-
-    attrs = %{
-      translation_run_id: run.id,
-      translation_unit_id: unit.id,
-      status: "translated",
-      translated_text: translated_text,
-      translated_markup: translated_markup,
-      placeholders: unit.placeholders || %{},
-      llm_response: llm_response,
-      metrics: %{},
-      metadata: %{"strategy" => strategy, "source_hash" => unit.source_hash}
+  defp translation_metadata(unit, strategy) do
+    %{
+      "strategy" => strategy,
+      "source_hash" => unit.source_hash
     }
-
-    %BlockTranslation{}
-    |> BlockTranslation.changeset(attrs)
-    |> Repo.insert(
-      on_conflict: {:replace_all_except, [:id, :inserted_at]},
-      conflict_target: [:translation_run_id, :translation_unit_id]
-    )
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   defp llm_translate(run, unit) do
-    source = unit.source_markup || unit.source_text || ""
+    source = unit.source_text # Use protected text instead of raw markup
 
     case LlmClient.translate(run.llm_config_snapshot, source, usage_type: :translate) do
-      {:ok, translated, llm_response} ->
-        {translated, translated, llm_response}
+      {:ok, translated_text, llm_response} ->
+        # Restore HTML tags from [[1]] placeholders
+        translated_markup = DocCoffeeLite.Translation.Placeholder.restore(translated_text, unit.placeholders || %{})
+        {translated_text, translated_markup, llm_response}
 
       {:error, reason} ->
-        {source, source, %{"error" => inspect(reason)}}
+        {unit.source_text, unit.source_markup, %{"error" => inspect(reason)}}
     end
   end
 

@@ -63,6 +63,7 @@ defmodule DocCoffeeLite.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:oban, "~> 2.20"},
+      {:oban_web, "~> 2.0"},
       {:req, "~> 0.5"},
       {:floki, ">= 0.0.0"},
       {:langchain, "~> 0.4"},

@@ -212,7 +212,7 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
   defp read_nav_toc(path, reader) do
     with {:ok, xml} <- reader.(path),
          {:ok, doc} <- parse_xml(xml) do
-      navs = xpath(doc, ~c"//*[local-name()='nav']")
+      navs = Floki.find(doc, "nav")
       nav = find_nav_toc(navs) || List.first(navs)
 
       case nav do
@@ -220,8 +220,8 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
           {:ok, []}
 
         _ ->
-          links = xpath(nav, ~c".//*[local-name()='a']")
-          entries = Enum.map(links, &xpath_text(&1, ~c".//text()"))
+          links = Floki.find(nav, "a")
+          entries = Enum.map(links, &Floki.text(&1))
           {:ok, entries}
       end
     end
@@ -230,11 +230,13 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
   defp read_ncx_toc(path, reader) do
     with {:ok, xml} <- reader.(path),
          {:ok, doc} <- parse_xml(xml) do
-      navpoints = xpath(doc, ~c"//*[local-name()='navPoint']")
+      navpoints = Floki.find(doc, "navPoint")
 
       entries =
         Enum.map(navpoints, fn navpoint ->
-          xpath_text(navpoint, ~c".//*[local-name()='navLabel']/*[local-name()='text']/text()")
+          navpoint
+          |> Floki.find("navLabel text")
+          |> Floki.text()
         end)
 
       {:ok, entries}
@@ -243,12 +245,8 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
 
   defp find_nav_toc(navs) do
     Enum.find(navs, fn nav ->
-      {_, attrs, _} = :xmerl_lib.simplify_element(nav)
-
-      case attr_value(attrs, :type) || attr_value(attrs, :"epub:type") do
-        "toc" -> true
-        _ -> false
-      end
+      type = attr_value(nav, "type") || attr_value(nav, "epub:type")
+      type == "toc"
     end)
   end
 
@@ -273,7 +271,7 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
 
   defp tree_reader(%DocumentTree{work_dir: work_dir}) do
     reader = fn path ->
-      with :ok <- EpubPath.validate_relative_path(path),
+      with :ok <-EpubPath.validate_relative_path(path),
            {:ok, full_path} <- EpubPath.safe_join(work_dir, path) do
         File.read(full_path)
       end
@@ -333,36 +331,17 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
     end
   end
 
-  defp xpath(doc, path) do
-    :xmerl_xpath.string(path, doc)
-  end
-
-  defp xpath_text(doc, path) do
-    doc
-    |> xpath(path)
-    |> Enum.map(&text_from_node/1)
-    |> Enum.join()
-    |> String.trim()
-  end
-
-  defp text_from_node({:xmlText, _parents, _pos, _lang, value, _type}), do: to_string(value)
-  defp text_from_node(value) when is_list(value), do: to_string(value)
-  defp text_from_node(value) when is_binary(value), do: value
-  defp text_from_node(_), do: ""
-
-  defp attr_value(attrs, name) do
-    case List.keyfind(attrs, name, 0) do
-      {^name, value} -> value |> to_string() |> String.trim()
-      nil -> nil
+  defp attr_value(element, name) do
+    case Floki.attribute(element, name) do
+      [value | _] -> String.trim(value)
+      _ -> nil
     end
   end
 
   defp parse_xml(xml) do
-    try do
-      {doc, _} = :xmerl_scan.string(:erlang.binary_to_list(xml))
-      {:ok, doc}
-    catch
-      _, reason -> {:error, {:xml_parse_error, reason}}
+    case Floki.parse_document(xml) do
+      {:ok, doc} -> {:ok, doc}
+      {:error, reason} -> {:error, {:xml_parse_error, reason}}
     end
   end
 end

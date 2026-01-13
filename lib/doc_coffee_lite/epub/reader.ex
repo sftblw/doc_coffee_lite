@@ -1,6 +1,6 @@
 defmodule DocCoffeeLite.Epub.Reader do
   @moduledoc """
-  Reads and validates EPUB containers, then parses container and OPF metadata.
+  Reads and validates EPUB containers, then parses container and OPF metadata using Floki.
   """
 
   alias DocCoffeeLite.Epub.Package
@@ -126,17 +126,23 @@ defmodule DocCoffeeLite.Epub.Reader do
     container_path = Path.join(work_dir, @container_path)
 
     with {:ok, xml} <- File.read(container_path),
-         {:ok, doc} <- parse_xml(xml, path: @container_path),
-         [rootfile_path | _rest] <-
-           xpath_attr(doc, "//*[local-name()='rootfile']/@full-path"),
+         {:ok, doc} <- parse_xml(xml),
+         rootfile_path when is_binary(rootfile_path) <- find_rootfile_path(doc),
          rootfile_path <- String.trim(rootfile_path),
-         :ok <- EpubPath.validate_relative_path(rootfile_path) do
+         :ok <-EpubPath.validate_relative_path(rootfile_path) do
       {:ok, rootfile_path}
     else
-      [] -> {:error, :missing_rootfile}
+      nil -> {:error, :missing_rootfile}
       {:error, reason} -> {:error, reason}
       _ -> {:error, :invalid_container}
     end
+  end
+
+  defp find_rootfile_path(doc) do
+    doc
+    |> Floki.find("rootfile")
+    |> Floki.attribute("full-path")
+    |> List.first()
   end
 
   defp read_opf(work_dir, rootfile_path) do
@@ -144,15 +150,12 @@ defmodule DocCoffeeLite.Epub.Reader do
     rootfile_dir = normalize_root_dir(Path.dirname(rootfile_path))
 
     with {:ok, xml} <- File.read(Path.join(work_dir, rootfile_path)),
-         {:ok, doc} <- parse_xml(xml, path: rootfile_path),
+         {:ok, doc} <- parse_xml(xml),
          {:ok, manifest} <- parse_manifest(doc, rootfile_dir),
          {:ok, {spine, spine_toc_id}} <- parse_spine(doc),
          {:ok, spine_items} <- resolve_spine_items(manifest, spine) do
-      version =
-        doc
-        |> xpath_attr("/*[local-name()='package']/@version")
-        |> List.first()
-
+      
+      version = doc |> Floki.find("package") |> Floki.attribute("version") |> List.first()
       metadata = parse_metadata(doc)
       nav_path = find_nav_path(manifest)
       toc_ncx_path = find_toc_ncx_path(manifest, spine_toc_id)
@@ -182,20 +185,19 @@ defmodule DocCoffeeLite.Epub.Reader do
   end
 
   defp parse_manifest(doc, rootfile_dir) do
-    items = xpath(doc, "//*[local-name()='manifest']/*[local-name()='item']")
+    items = Floki.find(doc, "manifest item")
 
     Enum.reduce_while(items, {:ok, %{}}, fn item, {:ok, acc} ->
-      {_, attrs, _} = :xmerl_lib.simplify_element(item)
-      id = attr_value(attrs, :id)
-      href = attr_value(attrs, :href)
+      id = attr_value(item, "id")
+      href = attr_value(item, "href")
 
       if is_nil(id) or is_nil(href) do
         {:halt, {:error, :invalid_manifest_item}}
       else
         case resolve_href(rootfile_dir, href) do
           {:ok, full_path} ->
-            media_type = attr_value(attrs, :"media-type")
-            properties = attr_value(attrs, :properties)
+            media_type = attr_value(item, "media-type")
+            properties = attr_value(item, "properties")
 
             item_map = %{
               id: id,
@@ -215,22 +217,17 @@ defmodule DocCoffeeLite.Epub.Reader do
   end
 
   defp parse_spine(doc) do
-    case xpath(doc, "//*[local-name()='spine']") do
+    case Floki.find(doc, "spine") do
       [] ->
         {:error, :missing_spine}
 
       [spine_element | _rest] ->
-        {_, attrs, _} = :xmerl_lib.simplify_element(spine_element)
-        spine_toc_id = attr_value(attrs, :toc)
-
-        itemrefs = xpath(doc, "//*[local-name()='spine']/*[local-name()='itemref']")
+        spine_toc_id = attr_value(spine_element, "toc")
+        itemrefs = Floki.find(spine_element, "itemref")
 
         spine =
           itemrefs
-          |> Enum.map(fn itemref ->
-            {_, item_attrs, _} = :xmerl_lib.simplify_element(itemref)
-            attr_value(item_attrs, :idref)
-          end)
+          |> Enum.map(fn itemref -> attr_value(itemref, "idref") end)
           |> Enum.reject(&is_nil/1)
 
         {:ok, {spine, spine_toc_id}}
@@ -253,7 +250,11 @@ defmodule DocCoffeeLite.Epub.Reader do
   end
 
   defp parse_metadata(doc) do
-    title = xpath_text(doc, "//*[local-name()='metadata']/*[local-name()='title']/text()")
+    title =
+      doc
+      |> Floki.find("metadata > title, metadata > dc\:title")
+      |> Floki.text(sep: " ")
+      |> String.trim()
 
     if title == "" do
       %{}
@@ -326,98 +327,17 @@ defmodule DocCoffeeLite.Epub.Reader do
     |> String.split(~r/\s+/, trim: true)
   end
 
-  defp attr_value(attrs, name) do
-    case List.keyfind(attrs, name, 0) do
-      {^name, value} -> value |> to_string() |> String.trim()
-      nil -> nil
+  defp attr_value(element, name) do
+    case Floki.attribute(element, name) do
+      [value | _] -> String.trim(value)
+      _ -> nil
     end
   end
 
-  defp xpath(doc, path) do
-    :xmerl_xpath.string(String.to_charlist(path), doc)
-  end
-
-  defp xpath_attr(doc, path) do
-    doc
-    |> xpath(path)
-    |> Enum.map(&attr_from_node/1)
-  end
-
-  defp attr_from_node(
-         {:xmlAttribute, _name, _expanded, _nsinfo, _namespace, _parents, _pos, _language, value,
-          _normalized}
-       ) do
-    to_string(value)
-  end
-
-  defp attr_from_node(_), do: ""
-
-  defp xpath_text(doc, path) do
-    doc
-    |> xpath(path)
-    |> Enum.map(&text_from_node/1)
-    |> Enum.join()
-    |> String.trim()
-  end
-
-  defp text_from_node({:xmlText, _parents, _pos, _lang, value, _type}), do: to_string(value)
-  defp text_from_node(value) when is_list(value), do: to_string(value)
-  defp text_from_node(value) when is_binary(value), do: value
-  defp text_from_node(_), do: ""
-
-  defp parse_xml(xml, opts) do
-    try do
-      path = Keyword.get(opts, :path)
-
-      xml = normalize_xml(xml)
-
-      case scan_xml(xml) do
-        {:ok, doc} ->
-          {:ok, doc}
-
-        {:error, reason} ->
-          xml = force_utf8(xml)
-
-          case scan_xml(xml) do
-            {:ok, doc} ->
-              {:ok, doc}
-
-            {:error, reason2} ->
-              {:error, {:xml_parse_error, %{path: path, first: reason, retry: reason2}}}
-          end
-      end
-    catch
-      _, reason -> {:error, {:xml_parse_error, %{path: Keyword.get(opts, :path), first: reason}}}
+  defp parse_xml(xml) do
+    case Floki.parse_document(xml) do
+      {:ok, doc} -> {:ok, doc}
+      {:error, reason} -> {:error, {:xml_parse_error, reason}}
     end
   end
-
-  defp scan_xml(xml) when is_binary(xml) do
-    try do
-      xml
-      |> :erlang.binary_to_list()
-      |> :xmerl_scan.string()
-      |> case do
-        {doc, _} -> {:ok, doc}
-      end
-    catch
-      _, reason -> {:error, reason}
-    end
-  end
-
-  defp force_utf8(xml) when is_binary(xml) do
-    case :unicode.characters_to_binary(xml, :utf8, :utf8) do
-      binary when is_binary(binary) -> binary
-      _ -> xml
-    end
-  catch
-    _, _ -> xml
-  end
-
-  defp normalize_xml(xml) when is_binary(xml) do
-    xml
-    |> strip_utf8_bom()
-  end
-
-  defp strip_utf8_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest
-  defp strip_utf8_bom(xml), do: xml
 end

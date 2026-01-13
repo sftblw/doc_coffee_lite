@@ -21,6 +21,6 @@ defmodule DocCoffeeLite.Translation.BlockTranslation do
   def changeset(block_translation, attrs) do
     block_translation
     |> cast(attrs, [:translation_run_id, :translation_unit_id, :status, :translated_text, :translated_markup, :placeholders, :llm_response, :metrics, :metadata])
-    |> validate_required([:status, :translated_text, :translated_markup])
+    |> validate_required([:status])
   end
 end

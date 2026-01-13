@@ -1,5 +1,6 @@
 defmodule DocCoffeeLiteWeb.Router do
   use DocCoffeeLiteWeb, :router
+  import Oban.Web.Router
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -17,6 +18,7 @@ defmodule DocCoffeeLiteWeb.Router do
   scope "/", DocCoffeeLiteWeb do
     pipe_through :browser
 
+    oban_dashboard "/oban"
     live "/", HomeLive
     live "/projects", ProjectsLive
     live "/projects/:project_id", ProjectLive

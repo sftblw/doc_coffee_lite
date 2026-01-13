@@ -70,7 +70,7 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
           selected = 
             case Map.get(grouped, key) do
               [config | _] -> config
-              _ -> global_fallback
+              _ -> global_fallback || env_fallback()
             end
 
           case selected do
@@ -88,6 +88,31 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
       {map, Enum.reverse(missing)}
     end)
   end
+
+  defp env_fallback do
+    server = System.get_env("LIVE_LLM_SERVER")
+    model = System.get_env("LIVE_LLM_MODEL")
+
+    if server && model do
+      %{
+        id: "env",
+        name: "Environment Fallback",
+        usage_type: "any",
+        tier: "any",
+        provider: "ollama",
+        model: model,
+        base_url: server,
+        api_key: "ollama",
+        settings: %{},
+        inserted_at: DateTime.utc_now(),
+        updated_at: DateTime.utc_now()
+      }
+    else
+      nil
+    end
+  end
+
+  defp serialize_config(%{id: "env"} = config), do: Map.new(config, fn {k, v} -> {to_string(k), v} end) |> Map.update!("inserted_at", &DateTime.to_iso8601/1) |> Map.update!("updated_at", &DateTime.to_iso8601/1)
 
   defp serialize_config(config) do
     %{ 

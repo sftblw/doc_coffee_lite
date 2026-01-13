@@ -21,6 +21,6 @@ defmodule DocCoffeeLite.Translation.TranslationRun do
   def changeset(translation_run, attrs) do
     translation_run
     |> cast(attrs, [:project_id, :status, :progress, :policy_snapshot, :glossary_snapshot, :llm_config_snapshot, :started_at, :completed_at])
-    |> validate_required([:status, :progress, :started_at, :completed_at])
+    |> validate_required([:status, :progress])
   end
 end

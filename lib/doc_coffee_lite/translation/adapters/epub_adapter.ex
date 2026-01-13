@@ -45,6 +45,7 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
       node_id: root_id,
       node_type: :document,
       source_path: session.source_path,
+      node_path: "/",
       position: 0,
       level: 0,
       title: tree_title(session),
@@ -162,12 +163,14 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
         children_ids: []
       }
 
+      {protected_text, mapping} = DocCoffeeLite.Translation.Placeholder.protect(payload.markup)
+
       unit = %TranslationUnit{
         unit_key: "block:#{position}",
         position: position,
-        source_text: payload.text,
+        source_text: protected_text,
         source_markup: payload.markup,
-        placeholders: %{},
+        placeholders: mapping,
         source_hash: hash_source(payload.markup),
         node_id: node_id,
         node_path: node_path,

@@ -1,5 +1,6 @@
 defmodule DocCoffeeLiteWeb.HomeLive do
   use DocCoffeeLiteWeb, :live_view
+  require Logger
 
   alias DocCoffeeLite.Epub
   alias DocCoffeeLite.Translation
@@ -50,6 +51,7 @@ defmodule DocCoffeeLiteWeb.HomeLive do
         {:noreply, socket |> clear_flash() |> put_flash(:error, "Please choose an .epub file.")}
 
       {:error, reason} ->
+        Logger.error("create_project failed: #{inspect(reason)}")
         {:noreply,
          socket
          |> clear_flash()
@@ -60,16 +62,29 @@ defmodule DocCoffeeLiteWeb.HomeLive do
   defp create_project_from_upload(socket) do
     consume_uploaded_entries(socket, :epub, fn %{path: path}, entry ->
       dest_path = Path.join(upload_dir(), "#{entry.uuid}.epub")
+      Logger.info("Processing upload: #{path} -> #{dest_path}")
 
       result =
         with :ok <- File.mkdir_p(upload_dir()),
              :ok <- File.cp(path, dest_path),
              {:ok, work_dir} <- allocate_work_dir(socket.id, entry),
+             _ = Logger.info("Work dir: #{work_dir}"),
              {:ok, session} <- Epub.open(dest_path, work_dir),
+             _ = Logger.info("EPUB opened"),
              {:ok, project} <- create_project(session, socket),
+             _ = Logger.info("Project created: #{project.id}"),
              {:ok, source_document} <- create_source_document(project, session, dest_path),
-             {:ok, _job} <- enqueue_prepare_job(project.id, source_document.id) do
+             _ = Logger.info("SourceDoc created: #{source_document.id}"),
+             {:ok, job} <- enqueue_prepare_job(project.id, source_document.id) do
+          Logger.info("Job enqueued: #{job.id}")
           {:ok, project.id}
+        else
+          {:error, reason} = error ->
+            Logger.error("Upload failed at step: #{inspect(reason)}")
+            error
+          error ->
+            Logger.error("Upload failed unexpected: #{inspect(error)}")
+            {:error, error}
         end
 
       {:ok, result}
@@ -78,7 +93,9 @@ defmodule DocCoffeeLiteWeb.HomeLive do
       [{:ok, project_id}] -> {:ok, project_id}
       [{:error, reason}] -> {:error, reason}
       [] -> {:error, :missing_upload}
-      other -> {:error, {:unexpected_upload_result, other}}
+      other -> 
+        Logger.error("Unexpected consume_uploaded_entries result: #{inspect(other)}")
+        {:error, {:unexpected_upload_result, other}}
     end
   end
 
@@ -120,7 +137,7 @@ defmodule DocCoffeeLiteWeb.HomeLive do
       source_path: dest_path,
       work_dir: session.work_dir,
       metadata: session.package.metadata || %{},
-      checksum: ""
+      checksum: "pending-#{:os.system_time(:millisecond)}"
     })
   end
 

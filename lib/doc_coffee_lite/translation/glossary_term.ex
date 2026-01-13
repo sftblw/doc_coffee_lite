@@ -20,6 +20,6 @@ defmodule DocCoffeeLite.Translation.GlossaryTerm do
   def changeset(glossary_term, attrs) do
     glossary_term
     |> cast(attrs, [:project_id, :source_text, :target_text, :status, :source, :notes, :usage_count, :metadata])
-    |> validate_required([:source_text, :target_text, :status, :source, :notes, :usage_count])
+    |> validate_required([:source_text, :status])
   end
 end

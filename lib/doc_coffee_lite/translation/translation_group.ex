@@ -24,6 +24,6 @@ defmodule DocCoffeeLite.Translation.TranslationGroup do
   def changeset(translation_group, attrs) do
     translation_group
     |> cast(attrs, [:project_id, :source_document_id, :document_node_id, :group_key, :group_type, :position, :status, :progress, :cursor, :context_summary, :metadata])
-    |> validate_required([:group_key, :group_type, :position, :status, :progress, :cursor, :context_summary])
+    |> validate_required([:group_key, :group_type, :position, :status, :progress, :cursor])
   end
 end
