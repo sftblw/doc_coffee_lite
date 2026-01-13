@@ -46,6 +46,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       {:ok, group} ->
         with {:ok, group} <- ensure_group_running(group),
              units <- fetch_units(group, batch_size) do
+          Logger.info("Fetched #{length(units)} units for group #{group.id}")
           case units do
             [] ->
               finalize_group(group)
@@ -78,7 +79,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
         {:ok, run, group, project} ->
           case ensure_active(run, group, project) do
             {:ok, group} ->
-              case process_unit(run, group, unit, strategy) do
+              case process_unit(run, group, unit, strategy, project) do
                 {:ok, group} -> {:cont, {:ok, group}}
                 {:error, reason} -> {:halt, {:error, reason}}
               end
@@ -94,7 +95,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     end)
   end
 
-  defp process_unit(run, group, unit, strategy) do
+  defp process_unit(run, group, unit, strategy, project) do
     Logger.info("Processing unit #{unit.id} (strategy: #{strategy})")
     # 1. Mark as translating (quick DB update)
     {:ok, unit} = set_unit_status(unit, "translating")
@@ -104,7 +105,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     translation_result =
       case strategy do
         "llm" ->
-          llm_translate(run, unit)
+          llm_translate(run, unit, project)
 
         _ ->
           Logger.info("Using noop strategy for unit #{unit.id}")
@@ -114,20 +115,18 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     {text, _markup, _resp} = translation_result
     Logger.info("Translation completed for unit #{unit.id} (length: #{String.length(text)})")
 
-    # 3. Save result and update status
-    Logger.info("Saving translation result for unit #{unit.id}...")
-    Repo.transaction(fn ->
-      with {:ok, block} <- save_translation_result(run, unit, translation_result, strategy),
-           _ = Logger.info("Block saved: #{block.id}"),
-           {:ok, _unit} <- set_unit_status(unit, "translated"),
-           {:ok, group} <- advance_group_cursor(group, unit) do
-        group
-      else
-        {:error, reason} -> 
-          Logger.error("Failed to save unit #{unit.id}: #{inspect(reason)}")
-          Repo.rollback(reason)
-      end
-    end)
+    # 3. Save result and update status (direct updates for maximum reliability)
+    with {:ok, _block} <- save_translation_result(run, unit, translation_result, strategy),
+         {:ok, _unit} <- set_unit_status(unit, "translated"),
+         {:ok, group} <- advance_group_cursor(group, unit) do
+      # Update overall project progress
+      DocCoffeeLite.Translation.update_project_progress(run.project_id)
+      {:ok, group}
+    else
+      {:error, reason} -> 
+        Logger.error("Failed to save unit #{unit.id}: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 
   defp save_translation_result(run, unit, {text, markup, resp}, strategy) do
@@ -247,10 +246,11 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     |> Map.new()
   end
 
-  defp llm_translate(run, unit) do
+  defp llm_translate(run, unit, project) do
     source = unit.source_text # Use protected text instead of raw markup
+    target_lang = project.target_lang || "Korean"
 
-    case LlmClient.translate(run.llm_config_snapshot, source, usage_type: :translate) do
+    case LlmClient.translate(run.llm_config_snapshot, source, usage_type: :translate, target_lang: target_lang) do
       {:ok, translated_text, llm_response} ->
         # Restore HTML tags from [[1]] placeholders
         translated_markup = DocCoffeeLite.Translation.Placeholder.restore(translated_text, unit.placeholders || %{})

@@ -1,6 +1,6 @@
 defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
   @moduledoc """
-  Builds a format-agnostic DocumentTree and translation groups from EPUB content.
+  Builds a format-agnostic DocumentTree by granularly segmenting EPUB content.
   """
 
   alias DocCoffeeLite.Epub.Session
@@ -8,35 +8,14 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
   alias DocCoffeeLite.Translation.DocumentTreeNode
   alias DocCoffeeLite.Translation.Structs.TranslationGroup
   alias DocCoffeeLite.Translation.Structs.TranslationUnit
+  alias DocCoffeeLite.Translation.Placeholder
 
-  @block_tags ~w(
-    p
-    h1
-    h2
-    h3
-    h4
-    h5
-    h6
-    li
-    dt
-    dd
-    pre
-    code
-    blockquote
-    td
-    th
-    figcaption
-    caption
-  )
+  # Tags that should be treated as a single translatable unit
+  @block_tags ~w(p h1 h2 h3 h4 h5 h6 li dt dd td th figcaption caption pre code address)
+  
+  # Tags that contain blocks and should be traversed deeper
+  @container_tags ~w(body div section nav article aside header footer main ol ul table tr blockquote)
 
-  @block_xpath @block_tags
-               |> Enum.map(&"local-name()='#{&1}'")
-               |> Enum.join(" or ")
-               |> then(&".//*[#{&1}]")
-
-  @spec build(Session.t()) ::
-          {:ok, %{tree: DocumentTree.t(), groups: [TranslationGroup.t()]}}
-          | {:error, term()}
   def build(%Session{} = session) do
     content_paths = Session.content_paths(session)
     root_id = "doc:root"
@@ -48,7 +27,7 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
       node_path: "/",
       position: 0,
       level: 0,
-      title: tree_title(session),
+      title: session.package.metadata[:title],
       parent_id: nil,
       children_ids: []
     }
@@ -66,40 +45,35 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
           work_dir: session.work_dir,
           nodes: nodes,
           root_ids: [root_id],
-          metadata: tree_metadata(session)
+          metadata: %{}
         }
 
         {:ok, %{tree: tree, groups: Enum.reverse(groups)}}
 
-      {:error, reason} ->
-        {:error, reason}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   defp build_groups(session, content_paths, root_id, nodes) do
-    Enum.reduce_while(Enum.with_index(content_paths), {:ok, {nodes, [], []}}, fn {path, index},
-                                                                                 {:ok,
-                                                                                  {nodes, groups,
-                                                                                   file_ids}} ->
+    Enum.reduce_while(Enum.with_index(content_paths), {:ok, {nodes, [], []}}, fn {path, index}, {:ok, {nodes, groups, file_ids}} ->
       case build_group(session, path, index, root_id) do
         {:ok, {file_node, block_nodes, group}} ->
-          nodes =
-            nodes
-            |> Map.put(file_node.node_id, file_node)
-            |> Map.merge(block_nodes)
-
+          nodes = nodes |> Map.put(file_node.node_id, file_node) |> Map.merge(block_nodes)
           {:cont, {:ok, {nodes, [group | groups], [file_node.node_id | file_ids]}}}
-
-        {:error, reason} ->
-          {:halt, {:error, reason}}
+        {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
 
   defp build_group(session, path, index, root_id) do
     with {:ok, xml} <- Session.read_file(session, path),
-         {:ok, elements} <- block_elements(xml) do
+         {:ok, doc} <- Floki.parse_document(xml) do
+      
       file_node_id = "file:#{path}"
+      
+      # Start recursive extraction from body or root
+      body = Floki.find(doc, "body") |> List.first() || doc
+      elements = extract_granular_blocks([body])
 
       {units, block_nodes, child_ids} = build_units(elements, path, file_node_id)
 
@@ -129,51 +103,68 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
     end
   end
 
-  defp block_elements(xml) when is_binary(xml) do
-    with {:ok, doc} <- Floki.parse_document(xml),
-         body <- Floki.find(doc, "body") |> List.first() do
-      container = body || doc
+  # --- Granular Extraction ---
 
-      elements = Floki.find(container, @block_xpath)
-      elements = if elements == [], do: Floki.children(container), else: elements
-      elements = Enum.filter(elements, &match?({_, _, _}, &1))
+  defp extract_granular_blocks(nodes) when is_list(nodes) do
+    Enum.flat_map(nodes, &extract_granular_blocks/1)
+  end
 
-      {:ok, elements}
+  defp extract_granular_blocks({tag, _, _} = node) when tag in @block_tags do
+    # If a block tag contains other block tags, we must go deeper
+    children = Floki.children(node)
+    if Enum.any?(children, &is_block_element?/1) do
+      extract_granular_blocks(children)
+    else
+      [node] # Leaf block
     end
   end
 
+  defp extract_granular_blocks({tag, _, children}) when tag in @container_tags do
+    extract_granular_blocks(children)
+  end
+
+  defp extract_granular_blocks(text) when is_binary(text) do
+    if String.trim(text) == "", do: [], else: [text]
+  end
+
+  defp extract_granular_blocks(_), do: []
+
+  defp is_block_element?({tag, _, _}) when tag in @block_tags, do: true
+  defp is_block_element?({tag, _, children}) when tag in @container_tags, do: Enum.any?(children, &is_block_element?/1)
+  defp is_block_element?(_), do: false
+
+  # --- Unit Building ---
+
   defp build_units(elements, path, file_node_id) do
     elements
-    |> Enum.map(&element_payload/1)
-    |> Enum.reject(&blank_payload?/1)
     |> Enum.with_index()
-    |> Enum.reduce({[], %{}, []}, fn {payload, index}, {units, nodes, child_ids} ->
+    |> Enum.reduce({[], %{}, []}, fn {element, index}, {units, nodes, child_ids} ->
       position = index
       node_id = "block:#{path}:#{position}"
-      node_path = "body/#{payload.tag}[#{index + 1}]"
+      
+      {markup, _text} = element_info(element)
+      {protected_text, mapping} = Placeholder.protect(markup)
 
       node = %DocumentTreeNode{
         node_id: node_id,
-        node_type: node_type_for(payload.tag),
+        node_type: :block,
         source_path: path,
-        node_path: node_path,
+        node_path: "body/[#{index + 1}]",
         position: position,
         level: 2,
         parent_id: file_node_id,
         children_ids: []
       }
 
-      {protected_text, mapping} = DocCoffeeLite.Translation.Placeholder.protect(payload.markup)
-
       unit = %TranslationUnit{
         unit_key: "block:#{position}",
         position: position,
         source_text: protected_text,
-        source_markup: payload.markup,
+        source_markup: markup,
         placeholders: mapping,
-        source_hash: hash_source(payload.markup),
+        source_hash: hash_source(markup),
         node_id: node_id,
-        node_path: node_path,
+        node_path: node.node_path,
         metadata: %{}
       }
 
@@ -184,67 +175,14 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
     end)
   end
 
-  defp element_payload({tag, _attrs, _children} = element) do
-    tag = to_string(tag)
-    markup = element |> Floki.raw_html() |> String.trim() |> strip_xml_declaration()
-    text = element |> Floki.text(sep: "") |> String.trim()
-
-    %{tag: tag, markup: markup, text: text}
-  end
-
-  defp blank_payload?(%{text: text}) do
-    text == ""
-  end
-
-  defp strip_xml_declaration(markup) when is_binary(markup) do
-    Regex.replace(~r/\A<\?xml[^>]*\?>\s*/i, markup, "")
-  end
-
-  defp strip_xml_declaration(markup), do: markup
-
-  defp node_type_for(tag) do
-    case tag do
-      "h1" -> :heading
-      "h2" -> :heading
-      "h3" -> :heading
-      "h4" -> :heading
-      "h5" -> :heading
-      "h6" -> :heading
-      "li" -> :list_item
-      "ol" -> :list
-      "ul" -> :list
-      "pre" -> :code
-      "code" -> :code
-      "table" -> :table
-      "tr" -> :row
-      "td" -> :cell
-      "th" -> :cell
-      "img" -> :image
-      "section" -> :section
-      "div" -> :section
-      _ -> :block
-    end
+  defp element_info(element) when is_binary(element), do: {element, element}
+  defp element_info(element) do
+    markup = Floki.raw_html(element)
+    text = Floki.text(element)
+    {markup, text}
   end
 
   defp hash_source(source) do
-    :crypto.hash(:sha256, source)
-    |> Base.encode16(case: :lower)
-  end
-
-  defp tree_title(%Session{package: %{metadata: %{title: title}}}) when is_binary(title),
-    do: title
-
-  defp tree_title(_session), do: nil
-
-  defp tree_metadata(%Session{package: package}) do
-    %{
-      version: package.version,
-      rootfile_path: package.rootfile_path,
-      spine_paths: package.spine_paths,
-      content_paths: package.content_paths,
-      nav_path: package.nav_path,
-      toc_ncx_path: package.toc_ncx_path,
-      metadata: package.metadata
-    }
+    :crypto.hash(:sha256, source) |> Base.encode16(case: :lower)
   end
 end

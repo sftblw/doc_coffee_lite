@@ -109,6 +109,37 @@ defmodule DocCoffeeLite.Translation do
     :ok
   end
 
+  # --- Progress & Status Management ---
+
+  def update_project_progress(project_id) do
+    total = Repo.aggregate(from(u in TranslationUnit, 
+      join: g in assoc(u, :translation_group), 
+      where: g.project_id == ^project_id), :count, :id)
+      
+    completed = Repo.aggregate(from(u in TranslationUnit, 
+      join: g in assoc(u, :translation_group), 
+      where: g.project_id == ^project_id and u.status == "translated"), :count, :id)
+
+    progress = if total > 0, do: round((completed / total) * 100), else: 0
+    
+    # Update Project DB
+    update_project_status_force(project_id, if(progress == 100, do: "ready", else: "running"))
+    from(p in Project, where: p.id == ^project_id) |> Repo.update_all(set: [progress: progress, updated_at: DateTime.utc_now()])
+
+    # If 100%, also mark the latest run as ready
+    if progress == 100 do
+      case get_latest_run(project_id) do
+        nil -> :ok
+        run -> update_run_status_force(run.id, "ready")
+      end
+    end
+
+    # Broadcast via PubSub
+    Phoenix.PubSub.broadcast(DocCoffeeLite.PubSub, "project:#{project_id}", {:progress_updated, progress})
+    
+    {:ok, progress}
+  end
+
   # --- Others ---
 
   def create_source_document(attrs) do

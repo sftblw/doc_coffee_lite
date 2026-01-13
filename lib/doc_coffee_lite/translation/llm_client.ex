@@ -14,17 +14,18 @@ defmodule DocCoffeeLite.Translation.LlmClient do
   @spec translate(config(), String.t(), keyword()) :: {:ok, String.t(), map()} | {:error, term()}
   def translate(config, source, opts \\ []) when is_map(config) and is_binary(source) do
     usage_type = Keyword.get(opts, :usage_type, :translate)
+    target_lang = Keyword.get(opts, :target_lang, "Korean")
 
     with {:ok, model} <- build_model(config, usage_type),
-         {:ok, response} <- ChatOpenAI.call(model, messages_for_translation(source)) do
+         {:ok, response} <- ChatOpenAI.call(model, messages_for_translation(source, target_lang)) do
       {:ok, extract_text(response), serialize_response(response)}
     end
   end
 
-  defp messages_for_translation(source) do
+  defp messages_for_translation(source, target_lang) do
     [
       Message.new_system!(
-        "Translate the user content into the target language configured by the project. " <>
+        "Translate the user content into #{target_lang}. " <>
           "Preserve placeholders and markup exactly, unless instructed otherwise. " <>
           "Return only the translation."
       ),

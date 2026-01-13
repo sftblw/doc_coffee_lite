@@ -9,6 +9,10 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
   @impl true
   def mount(%{"project_id" => project_id}, _session, socket) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(DocCoffeeLite.PubSub, "project:#{project_id}")
+    end
+
     socket =
       socket
       |> assign(:project, nil)
@@ -26,6 +30,12 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
       {:error, _reason} ->
         {:ok, socket |> put_flash(:error, "Project not found") |> push_navigate(to: ~p"/")}
     end
+  end
+
+  @impl true
+  def handle_info({:progress_updated, progress}, socket) do
+    project = socket.assigns.project
+    {:noreply, assign(socket, :project, %{project | progress: progress})}
   end
 
   @impl true
@@ -139,6 +149,14 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
           <div class="flex flex-wrap items-center gap-3">
             <button :if={@project && can_start?(@project, latest_run(@project))} phx-click="start" class="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white uppercase">Start</button>
             <button :if={@project && can_pause?(latest_run(@project))} phx-click="pause" class="rounded-full border bg-white px-4 py-2 text-xs font-semibold uppercase">Pause</button>
+            <.link
+              :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
+              id="project-download"
+              href={download_path(@project)}
+              class="inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-stone-800"
+            >
+              Download <.icon name="hero-arrow-down-tray" class="size-4" />
+            </.link>
             <.link :if={@project} navigate={~p"/"} class="rounded-full border bg-white px-4 py-2 text-xs font-semibold uppercase">Back</.link>
           </div>
         </header>
@@ -168,6 +186,13 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
       </div>
     </div>
     """
+  end
+
+  defp download_path(%Project{id: project_id} = project) do
+    case latest_run(project) do
+      %TranslationRun{id: run_id} -> ~p"/projects/#{project_id}/runs/#{run_id}/download"
+      _ -> "#"
+    end
   end
 
   defp load_project(project_id) do
