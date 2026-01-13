@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: doc_coffee_lite_dev
+    ports:
+      - "15432:5432"
+    # No restart policy for development
+    restart: "no"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:
