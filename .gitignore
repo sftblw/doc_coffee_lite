@@ -1,4 +1,6 @@
 .env
+priv/uploads
+priv/work
 
 # The directory Mix will write compiled artifacts to.
 /_build/
