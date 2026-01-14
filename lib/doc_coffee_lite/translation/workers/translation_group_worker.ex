@@ -235,7 +235,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
     case LlmClient.translate(run.llm_config_snapshot, source, usage_type: :translate, target_lang: target_lang) do
       {:ok, translated_text, llm_response} ->
-        # Restore HTML tags from [[1]] placeholders
+        # Restore HTML tags from [[p1]] placeholders
         translated_markup = DocCoffeeLite.Translation.Placeholder.restore(translated_text, unit.placeholders || %{})
         {translated_text, translated_markup, llm_response}
 

@@ -163,8 +163,8 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
 
       {[unit | units], Map.put(nodes, node_id, node), [node_id | child_ids]}
     end)
-    |> then(fn {units, nodes, child_ids} ->
-      {Enum.reverse(units), nodes, Enum.reverse(child_ids)}
+    |> then(fn {units, nodes, ids} ->
+      {Enum.reverse(units), nodes, Enum.reverse(ids)}
     end)
   end
 
