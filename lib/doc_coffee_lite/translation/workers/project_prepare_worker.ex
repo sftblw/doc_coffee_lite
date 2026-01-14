@@ -41,7 +41,7 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectPrepareWorker do
          {:ok, _persisted} <- Persistence.persist(tree, groups, project.id, source_document.id),
          {:ok, _policies} <- PolicyGenerator.generate_from_session(project.id, session),
          {:ok, _terms} <- GlossaryCollector.collect(project.id),
-         {:ok, _run} <- RunCreator.create(project.id, status: "draft"),
+         {:ok, _run} <- RunCreator.create(project.id, status: "draft", llm_opts: [allow_missing?: true]),
          {:ok, _project} <- clear_prepare_error(project) do
       :ok
     else

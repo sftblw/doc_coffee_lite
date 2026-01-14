@@ -8,8 +8,10 @@ defmodule DocCoffeeLiteWeb.DownloadController do
     project = Translation.get_project!(project_id)
     run = Translation.get_translation_run!(run_id)
     
-    filename = "translated-#{project.id}.epub"
-    path = Path.join(System.tmp_dir!(), filename)
+    clean_title = (project.title || "project") |> String.replace(~r/[^a-zA-Z0-9]/, "_")
+    lang_suffix = (project.target_lang || "unknown") |> String.downcase()
+    filename = "#{clean_title}-translated-#{lang_suffix}.epub"
+    path = Path.join(System.tmp_dir!(), "export-#{run.id}.epub")
 
     case Export.export_epub(run.id, path) do
       :ok -> send_download(conn, {:file, path}, filename: filename)

@@ -67,7 +67,8 @@ defmodule DocCoffeeLite.MixProject do
       {:req, "~> 0.5"},
       {:floki, ">= 0.0.0"},
       {:langchain, "~> 0.4"},
-      {:bcrypt_elixir, "~> 3.0"}
+      {:bcrypt_elixir, "~> 3.0"},
+      {:dotenvy, "~> 0.8.0"}
     ]
   end
 

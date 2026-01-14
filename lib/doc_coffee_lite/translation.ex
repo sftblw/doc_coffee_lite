@@ -1,6 +1,6 @@
 defmodule DocCoffeeLite.Translation do
   @moduledoc """
-  The Translation context.
+  The Translation context (Ecto Version).
   """
 
   import Ecto.Query, warn: false
@@ -22,7 +22,7 @@ defmodule DocCoffeeLite.Translation do
   # --- Project ---
 
   def list_projects do
-    Repo.all(Project)
+    Repo.all(from p in Project, order_by: [desc: p.updated_at])
   end
 
   def get_project!(id), do: Repo.get!(Project, id)
@@ -47,9 +47,20 @@ defmodule DocCoffeeLite.Translation do
     with {:ok, _} <- update_project_status_force(project_id, "running"),
          run <- get_latest_run(project_id),
          {:ok, run} <- ensure_run_running(run, project_id),
+         {:ok, run} <- refresh_run_llm_snapshot(run),
          groups <- list_groups(project_id),
          strategy <- determine_strategy(run) do
       enqueue_groups(run.id, groups, strategy)
+    end
+  end
+
+  defp refresh_run_llm_snapshot(run) do
+    case DocCoffeeLite.Translation.LlmSelector.snapshot(run.project_id, allow_missing?: true) do
+      {:ok, snapshot} ->
+        {1, _} = from(r in TranslationRun, where: r.id == ^run.id)
+                 |> Repo.update_all(set: [llm_config_snapshot: snapshot, updated_at: DateTime.utc_now()])
+        {:ok, %{run | llm_config_snapshot: snapshot}}
+      _ -> {:ok, run}
     end
   end
 
@@ -62,13 +73,13 @@ defmodule DocCoffeeLite.Translation do
     end
   end
 
-  defp update_project_status_force(project_id, status) do
+  def update_project_status_force(project_id, status) do
     {count, _} = from(p in Project, where: p.id == ^project_id)
                  |> Repo.update_all(set: [status: status, updated_at: DateTime.utc_now()])
     if count == 1, do: {:ok, :updated}, else: {:error, :not_found}
   end
 
-  defp update_run_status_force(run_id, status) do
+  def update_run_status_force(run_id, status) do
     updates = [status: status, updated_at: DateTime.utc_now()]
     updates = if status == "running", do: Keyword.put(updates, :started_at, DateTime.utc_now()), else: updates
     
@@ -77,7 +88,7 @@ defmodule DocCoffeeLite.Translation do
     if count == 1, do: {:ok, :updated}, else: {:error, :not_found}
   end
 
-  defp get_latest_run(project_id) do
+  def get_latest_run(project_id) do
     Repo.one(from r in TranslationRun, where: r.project_id == ^project_id, order_by: [desc: r.inserted_at], limit: 1)
   end
 
@@ -94,8 +105,15 @@ defmodule DocCoffeeLite.Translation do
   end
 
   defp determine_strategy(run) do
-    if run.llm_config_snapshot && map_size(run.llm_config_snapshot) > 0, do: "llm", else: "noop"
+    if has_llm_configs?(run.llm_config_snapshot), do: "llm", else: "noop"
   end
+
+  defp has_llm_configs?(%{"configs" => configs}) when is_map(configs) do
+    Enum.any?(configs, fn {_type, tiers} ->
+      is_map(tiers) and Enum.any?(tiers, fn {_tier, config} -> is_map(config) and map_size(config) > 0 end)
+    end)
+  end
+  defp has_llm_configs?(_), do: false
 
   defp enqueue_groups(run_id, groups, strategy) do
     jobs = Enum.map(groups, fn group ->
@@ -122,9 +140,10 @@ defmodule DocCoffeeLite.Translation do
 
     progress = if total > 0, do: round((completed / total) * 100), else: 0
     
-    # Update Project DB
-    update_project_status_force(project_id, if(progress == 100, do: "ready", else: "running"))
-    from(p in Project, where: p.id == ^project_id) |> Repo.update_all(set: [progress: progress, updated_at: DateTime.utc_now()])
+    # Update Project DB (use direct update_all for reliability)
+    status = if progress == 100, do: "ready", else: "running"
+    from(p in Project, where: p.id == ^project_id) 
+    |> Repo.update_all(set: [progress: progress, status: status, updated_at: DateTime.utc_now()])
 
     # If 100%, also mark the latest run as ready
     if progress == 100 do
@@ -140,63 +159,43 @@ defmodule DocCoffeeLite.Translation do
     {:ok, progress}
   end
 
-  # --- Others ---
+  # --- Others (Ecto Boilerplate) ---
 
   def create_source_document(attrs) do
-    %SourceDocument{}
-    |> SourceDocument.changeset(attrs)
-    |> Repo.insert()
-  end
-
-  def create_document_node(attrs) do
-    %DocumentNode{}
-    |> DocumentNode.changeset(attrs)
-    |> Repo.insert()
-  end
-
-  def create_translation_group(attrs) do
-    %TranslationGroup{}
-    |> TranslationGroup.changeset(attrs)
-    |> Repo.insert()
-  end
-
-  def create_translation_unit(attrs) do
-    %TranslationUnit{}
-    |> TranslationUnit.changeset(attrs)
-    |> Repo.insert()
-  end
-
-  def create_translation_run(attrs) do
-    %TranslationRun{}
-    |> TranslationRun.changeset(attrs)
-    |> Repo.insert()
-  end
-
-  def create_block_translation(attrs) do
-    %BlockTranslation{}
-    |> BlockTranslation.changeset(attrs)
-    |> Repo.insert()
-  end
-
-  def create_policy_set(attrs) do
-    %PolicySet{}
-    |> PolicySet.changeset(attrs)
-    |> Repo.insert()
-  end
-
-  def create_glossary_term(attrs) do
-    %GlossaryTerm{}
-    |> GlossaryTerm.changeset(attrs)
-    |> Repo.insert()
+    %SourceDocument{} |> SourceDocument.changeset(attrs) |> Repo.insert()
   end
 
   def get_source_document!(id), do: Repo.get!(SourceDocument, id)
-  def get_document_node!(id), do: Repo.get!(DocumentNode, id)
-  def get_translation_group!(id), do: Repo.get!(TranslationGroup, id)
-  def get_translation_unit!(id), do: Repo.get!(TranslationUnit, id)
-  def get_translation_run!(id), do: Repo.get!(TranslationRun, id)
-  def get_block_translation!(id), do: Repo.get!(BlockTranslation, id)
-  def get_policy_set!(id), do: Repo.get!(PolicySet, id)
-  def get_glossary_term!(id), do: Repo.get!(GlossaryTerm, id)
 
+  def create_document_node(attrs) do
+    %DocumentNode{} |> DocumentNode.changeset(attrs) |> Repo.insert()
+  end
+
+  def get_document_node!(id), do: Repo.get!(DocumentNode, id)
+
+  def create_translation_group(attrs) do
+    %TranslationGroup{} |> TranslationGroup.changeset(attrs) |> Repo.insert()
+  end
+
+  def get_translation_group!(id), do: Repo.get!(TranslationGroup, id)
+
+  def create_translation_unit(attrs) do
+    %TranslationUnit{} |> TranslationUnit.changeset(attrs) |> Repo.insert()
+  end
+
+  def get_translation_unit!(id), do: Repo.get!(TranslationUnit, id)
+
+  def get_translation_run!(id), do: Repo.get!(TranslationRun, id)
+
+  def create_block_translation(attrs) do
+    %BlockTranslation{} |> BlockTranslation.changeset(attrs) |> Repo.insert()
+  end
+
+  def create_policy_set(attrs) do
+    %PolicySet{} |> PolicySet.changeset(attrs) |> Repo.insert()
+  end
+
+  def create_glossary_term(attrs) do
+    %GlossaryTerm{} |> GlossaryTerm.changeset(attrs) |> Repo.insert()
+  end
 end

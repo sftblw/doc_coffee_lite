@@ -10,8 +10,8 @@ config :doc_coffee_lite, DocCoffeeLite.Repo,
   password: "postgres",
   hostname: "localhost",
   database: "doc_coffee_lite_test#{System.get_env("MIX_TEST_PARTITION")}",
-  pool: Ecto.Adapters.SQL.Sandbox,,
-  port: 15432
+  pool: Ecto.Adapters.SQL.Sandbox,
+  port: 15432,
   pool_size: System.schedulers_online() * 2
 
 # We don't run a server during test. If one is required,

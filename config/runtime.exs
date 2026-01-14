@@ -1,5 +1,18 @@
 import Config
 
+if config_env() in [:dev, :test] do
+  env_file = ".env"
+  if File.exists?(env_file) do
+    # Use source to get the map and put it into System env
+    case Dotenvy.source([env_file, ".env.#{config_env()}"]) do
+      {:ok, env_vars} -> 
+        System.put_env(env_vars)
+      {:error, reason} ->
+        IO.puts(:stderr, "Warning: Failed to load .env file: #{inspect(reason)}")
+    end
+  end
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

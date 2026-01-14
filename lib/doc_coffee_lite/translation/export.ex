@@ -1,15 +1,13 @@
 defmodule DocCoffeeLite.Translation.Export do
   @moduledoc """
-  Assembles translated EPUB content using granular block replacement.
+  Assembles translated EPUB content using explicit data-unit-id markers.
   """
 
   import Ecto.Query
+  require Logger
   alias DocCoffeeLite.Repo
   alias DocCoffeeLite.Epub.Writer
   alias DocCoffeeLite.Translation.{Project, SourceDocument, TranslationGroup, TranslationUnit, TranslationRun, BlockTranslation}
-
-  @block_tags ~w(p h1 h2 h3 h4 h5 h6 li dt dd td th figcaption caption pre code address)
-  @container_tags ~w(body div section nav article aside header footer main ol ul table tr blockquote)
 
   def export_epub(run_id, output_path, opts \\ []) do
     output_path = Path.expand(output_path)
@@ -53,95 +51,58 @@ defmodule DocCoffeeLite.Translation.Export do
     end)
   end
 
-  defp apply_group(run_id, group, work_dir, allow_missing?) do
-    units = Repo.all(from u in TranslationUnit, where: u.translation_group_id == ^group.id, order_by: [asc: u.position])
+  defp apply_group(run_id, group, work_dir, _allow_missing?) do
+    units = Repo.all(from u in TranslationUnit, where: u.translation_group_id == ^group.id)
     unit_ids = Enum.map(units, & &1.id)
     translations = Repo.all(from b in BlockTranslation, where: b.translation_run_id == ^run_id and b.translation_unit_id in ^unit_ids)
+    
+    # Map by unit_key (which contains the data-unit-id marker)
+    units_map = Map.new(units, &{&1.id, &1})
+    trans_map = Map.new(translations, fn b -> 
+      unit = Map.get(units_map, b.translation_unit_id)
+      {unit.unit_key, b.translated_markup}
+    end)
 
-    with {:ok, replacements} <- build_replacements(units, translations, allow_missing?),
-         full_path <- Path.join(work_dir, group.group_key),
-         {:ok, content} <- File.read(full_path),
-         {:ok, updated} <- replace_markup(content, replacements) do
+    full_path = Path.join(work_dir, group.group_key)
+    
+    with {:ok, content} <- File.read(full_path),
+         {:ok, updated} <- replace_by_markers(content, trans_map, group.group_key) do
       File.write(full_path, updated)
     end
   end
 
-  defp build_replacements(units, translations, allow_missing?) do
-    map = Map.new(translations, &{&1.translation_unit_id, &1.translated_markup})
-    results = Enum.map(units, fn u ->
-      case Map.get(map, u.id) do
-        nil -> if allow_missing?, do: {:ok, u.source_markup}, else: {:error, :missing}
-        markup -> {:ok, markup}
-      end
-    end)
-
-    if Enum.any?(results, &match?({:error, _}, &1)) do
-      {:error, :missing_translation}
-    else
-      {:ok, Enum.map(results, fn {:ok, m} -> m end)}
-    end
-  end
-
-  defp replace_markup(content, replacements) do
+  defp replace_by_markers(content, trans_map, group_key) do
     case Floki.parse_document(content) do
       {:ok, doc} ->
-        # Use the same recursive logic as EpubAdapter to find target nodes
-        {updated_doc, _} = do_replace(doc, replacements)
+        {updated_doc, count} = 
+          Floki.traverse_and_update(doc, 0, fn
+            {_tag, attrs, _children} = node, count ->
+              case List.keyfind(attrs, "data-unit-id", 0) do
+                {"data-unit-id", id} ->
+                  case Map.get(trans_map, id) do
+                    nil -> {node, count} # No translation, keep original
+                    markup ->
+                      case Floki.parse_fragment(markup) do
+                        {:ok, [new_node | _]} -> 
+                          # Important: remove the marker attribute from the new node!
+                          cleaned_node = strip_marker(new_node)
+                          {cleaned_node, count + 1}
+                        _ -> {node, count}
+                      end
+                  end
+                nil -> {node, count}
+              end
+            text, count -> {text, count}
+          end)
+        
+        Logger.info("Export: Replaced #{count} blocks in #{group_key}")
         {:ok, Floki.raw_html(updated_doc)}
       {:error, r} -> {:error, r}
     end
   end
 
-  defp do_replace(nodes, replacements) when is_list(nodes) do
-    Enum.reduce(nodes, {[], replacements}, fn node, {acc, reps} ->
-      {new_node, remaining_reps} = do_replace(node, reps)
-      {[new_node | acc], remaining_reps}
-    end)
-    |> then(fn {acc, reps} -> {Enum.reverse(acc), reps} end)
+  defp strip_marker({tag, attrs, children}) do
+    {tag, List.keydelete(attrs, "data-unit-id", 0), children}
   end
-
-  defp do_replace({tag, attrs, _children} = node, [next_rep | rest_reps] = reps) do
-    cond do
-      to_string(tag) in @block_tags ->
-        # If it has block children, we must recurse inside (matches EpubAdapter)
-        if has_block_child?(node) do
-          {new_children, remaining} = do_replace(Floki.children(node), reps)
-          {{tag, attrs, new_children}, remaining}
-        else
-          # Leaf block! Replace it.
-          case Floki.parse_fragment(next_rep) do
-            {:ok, [new_node | _]} -> {new_node, rest_reps}
-            _ -> {node, rest_reps}
-          end
-        end
-      to_string(tag) in @container_tags ->
-        {new_children, remaining} = do_replace(Floki.children(node), reps)
-        {{tag, attrs, new_children}, remaining}
-      true -> {node, reps}
-    end
-  end
-
-  defp do_replace(text, [next_rep | rest_reps]) when is_binary(text) do
-    if String.trim(text) == "" do
-      {text, [next_rep | rest_reps]}
-    else
-      # It was a "naked" text unit in EpubAdapter.
-      # parse_fragment handles plain text too.
-      case Floki.parse_fragment(next_rep) do
-        {:ok, [new_node | _]} -> {new_node, rest_reps}
-        _ -> {text, rest_reps}
-      end
-    end
-  end
-
-  defp do_replace(node, reps), do: {node, reps}
-
-  defp has_block_child?({_, _, children}) do
-    Enum.any?(children, fn
-      {tag, _, _} = node ->
-        to_string(tag) in @block_tags or has_block_child?(node)
-      _ -> false
-    end)
-  end
-  defp has_block_child?(_), do: false
+  defp strip_marker(node), do: node
 end

@@ -29,14 +29,14 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
     {config_map, missing} = build_snapshot(configs, usage_types, tiers)
 
     snapshot = %{
-      version: 1,
-      selected_at: DateTime.utc_now() |> DateTime.to_iso8601(),
-      configs: config_map,
-      missing: missing,
-      metadata: %{
-        usage_types: Enum.map(usage_types, &to_string/1),
-        tiers: Enum.map(tiers, &to_string/1),
-        project_id: project_id
+      "version" => 1,
+      "selected_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "configs" => config_map,
+      "missing" => missing,
+      "metadata" => %{
+        "usage_types" => Enum.map(usage_types, &to_string/1),
+        "tiers" => Enum.map(tiers, &to_string/1),
+        "project_id" => project_id
       }
     }
 
