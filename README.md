@@ -2,7 +2,7 @@
 
 DocCoffee-lite is a EPUB in-place auto translation tool via LLMs. You put EPUB file, You get EPUB file.
 
-99.99% vibe-coded, I don't know Elixir & Phoenix well. I whipped agent CLIs to learn phoenix, by translating phoenix books into my mother tongue, korean.
+99.99% vibe-coded, I don't know Elixir & Phoenix well. I whipped agent CLIs for translating phoenix books.
 
 You will need LLM provider, even ollama with gpt-oss:20b will work, to use this repo.
 
