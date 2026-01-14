@@ -14,11 +14,12 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
   @type config :: map()
 
-  @spec translate(config(), String.t(), keyword()) :: {:ok, map() | String.t(), map()} | {:error, term()}
+  @spec translate(config(), String.t(), keyword()) :: {:ok, map() | String.t(), String.t() | nil, map()} | {:error, term()}
   def translate(config, source, opts \\ []) when is_map(config) and is_binary(source) do
     usage_type = Keyword.get(opts, :usage_type, :translate)
     target_lang = Keyword.get(opts, :target_lang, "Korean")
     expected_keys = Keyword.get(opts, :expected_keys, [])
+    prev_context = Keyword.get(opts, :prev_context)
 
     with {:ok, model_config, selected_url} <- build_model_config(config, usage_type) do
       # Configure model with native json_schema enforcement
@@ -29,15 +30,15 @@ defmodule DocCoffeeLite.Translation.LlmClient do
           "# ROLE\nYou are a specialized translation engine.\n\n" <>
           "# TASK\nTranslate the provided text units into the target language: '#{target_lang}'.\n\n" <>
           "# CONSTRAINTS\n" <>
-          "1. Output ONLY a valid JSON object with a 'translations' array of strings.\n" <>
-          "2. Each string MUST be the full translated unit, including its original semantic tags (e.g., [[p_1]]...[[/p_1]]).\n" <>
-          "3. Maintain the original order of units.\n" <>
+          "1. Output ONLY a valid JSON object.\n" <>
+          "2. 'translations': An array of strings. Each string MUST be the full translated unit with its original semantic tags (e.g., [[p_1]]...[[/p_1]]).\n" <>
+          "3. 'context_summary': A brief one-sentence summary of the story/content so far to help the next translation batch.\n" <>
           "4. Do not include any explanations.\n\n" <>
           "# EXAMPLE\n" <>
-          "Input: [[p_1]]Hello[[/p_1]]\\n[[p_2]]World[[/p_2]]\n" <>
-          "Output: {\"translations\": [\"[[p_1]]안녕하세요[[/p_1]]\", \"[[p_2]]세상[[/p_2]]\"]}"
+          "Output: {\"translations\": [\"[[p_1]]...[[/p_1]]\"], \"context_summary\": \"The character has just arrived at the mysterious castle.\"}"
         ),
         Message.new_user!(
+          (if prev_context, do: "**Previous Context Summary**: #{prev_context}\n\n", else: "") <>
           "**Target Language Code**: #{target_lang}\n\n" <>
           "**Units to translate into #{target_lang}**:\n#{source}"
         )
@@ -53,9 +54,9 @@ defmodule DocCoffeeLite.Translation.LlmClient do
         content_text = extract_text(response)
 
         case validate_and_parse(content_text, expected_keys) do
-          {:ok, data} ->
+          {:ok, data, summary} ->
             if url, do: LlmPool.checkin(url)
-            {:ok, data, serialize_response(response)}
+            {:ok, data, summary, serialize_response(response)}
 
           {:error, feedback} when retries_left > 0 ->
             Logger.warning("Translation validation failed. Retries left: #{retries_left}. Feedback: #{feedback}")
@@ -68,8 +69,8 @@ defmodule DocCoffeeLite.Translation.LlmClient do
           {:error, _feedback} ->
             if url, do: LlmPool.checkin(url)
             case parse_best_effort(content_text) do
-              {:ok, data} -> {:ok, data, serialize_response(response)}
-              _ -> {:ok, content_text, serialize_response(response)}
+              {:ok, data, summary} -> {:ok, data, summary, serialize_response(response)}
+              _ -> {:ok, content_text, nil, serialize_response(response)}
             end
         end
 
@@ -81,8 +82,9 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
   defp validate_and_parse(text, expected_keys) do
     case Jason.decode(text) do
-      {:ok, %{"translations" => list}} when is_list(list) ->
+      {:ok, %{"translations" => list} = json} when is_list(list) ->
         parsed = parse_tagged_list(list)
+        summary = Map.get(json, "context_summary")
         missing_keys = Enum.reject(expected_keys, &Map.has_key?(parsed, &1))
 
         cond do
@@ -93,7 +95,7 @@ defmodule DocCoffeeLite.Translation.LlmClient do
             {:error, "The following tags are missing or malformed: #{Enum.join(missing_keys, ", ")}."}
 
           true ->
-            {:ok, parsed}
+            {:ok, parsed, summary}
         end
 
       _ -> {:error, "Invalid JSON format or missing 'translations' key."}
@@ -112,7 +114,8 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
   defp parse_best_effort(text) do
     case Jason.decode(text) do
-      {:ok, %{"translations" => list}} when is_list(list) -> {:ok, parse_tagged_list(list)}
+      {:ok, %{"translations" => list} = json} when is_list(list) -> 
+        {:ok, parse_tagged_list(list), Map.get(json, "context_summary")}
       _ -> :error
     end
   end
@@ -142,9 +145,10 @@ defmodule DocCoffeeLite.Translation.LlmClient do
             "translations" => %{
               "type" => "array",
               "items" => %{"type" => "string"}
-            }
+            },
+            "context_summary" => %{"type" => "string"}
           },
-          "required" => ["translations"],
+          "required" => ["translations", "context_summary"],
           "additionalProperties" => false
         }
       }

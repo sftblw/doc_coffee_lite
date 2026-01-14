@@ -102,11 +102,19 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
     target_lang = project.target_lang || "Korean"
     expected_keys = Enum.map(units, & &1.unit_key)
+    prev_context = group.context_summary
 
-    # 3. Call LLM once
-    case LlmClient.translate(run.llm_config_snapshot, combined_source, usage_type: :translate, target_lang: target_lang, expected_keys: expected_keys) do
-      {:ok, result, llm_response} ->
-        # 4. Parse and save each unit
+    # 3. Call LLM once with previous context
+    case LlmClient.translate(run.llm_config_snapshot, combined_source, 
+           usage_type: :translate, target_lang: target_lang, 
+           expected_keys: expected_keys, prev_context: prev_context) do
+      {:ok, result, new_summary, llm_response} ->
+        # 4. Update the group with the NEW context summary for the next batch
+        if new_summary do
+          update_group(group, %{context_summary: new_summary})
+        end
+
+        # 5. Parse and save each unit
         Enum.each(units, fn unit ->
           # Result can be a map (structured) or a string (raw blob)
           translated_text = 
