@@ -109,7 +109,7 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
               
             tag_s in @block_tags ->
               # Leaf block! Tag it.
-              id = "u:#{count}"
+              id = "u_#{count}"
               new_node = {tag, [{"data-unit-id", id} | attrs], children}
               {new_node, {acc ++ [{id, new_node}], count + 1}}
               
@@ -119,7 +119,7 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
           if String.trim(text) != "" do
             # Naked text - we can't easily tag it without wrapping, 
             # so let's wrap it in a span for safety
-            id = "u:#{count}"
+            id = "u_#{count}"
             new_node = {"span", [{"data-unit-id", id}], [text]}
             {new_node, {acc ++ [{id, new_node}], count + 1}}
           else

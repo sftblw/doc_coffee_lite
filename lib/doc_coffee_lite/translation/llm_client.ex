@@ -14,23 +14,64 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
   @type config :: map()
 
-  @spec translate(config(), String.t(), keyword()) :: {:ok, String.t(), map()} | {:error, term()}
+  @spec translate(config(), String.t(), keyword()) :: {:ok, map() | String.t(), map()} | {:error, term()}
   def translate(config, source, opts \\ []) when is_map(config) and is_binary(source) do
     usage_type = Keyword.get(opts, :usage_type, :translate)
     target_lang = Keyword.get(opts, :target_lang, "Korean")
+    expected_keys = Keyword.get(opts, :expected_keys, [])
 
-    with {:ok, model, selected_url} <- build_model(config, usage_type),
-         _ <- Logger.info("LLM Call: [#{usage_type}] using server #{selected_url}"),
-         {:ok, response} <- call_llm(model, messages_for_translation(source, target_lang), selected_url) do
-      {:ok, extract_text(response), serialize_response(response)}
+    with {:ok, model_config, selected_url} <- build_model_config(config, usage_type) do
+      # Configure model with native json_schema enforcement
+      llm = ChatOpenAI.new!(Map.put(model_config, :json_schema, translations_schema_payload()))
+
+      initial_messages = [
+        Message.new_system!(
+          "# ROLE\nYou are a specialized translation engine.\n\n" <>
+          "# TASK\nTranslate the provided text units into the target language: '#{target_lang}'.\n\n" <>
+          "# CONSTRAINTS\n" <>
+          "1. Output ONLY a valid JSON object with a 'translations' array of strings.\n" <>
+          "2. Each string MUST be the full translated unit, including its original semantic tags (e.g., [[p_1]]...[[/p_1]]).\n" <>
+          "3. Maintain the original order of units.\n" <>
+          "4. Do not include any explanations.\n\n" <>
+          "# EXAMPLE\n" <>
+          "Input: [[p_1]]Hello[[/p_1]]\\n[[p_2]]World[[/p_2]]\n" <>
+          "Output: {\"translations\": [\"[[p_1]]안녕하세요[[/p_1]]\", \"[[p_2]]세상[[/p_2]]\"]}"
+        ),
+        Message.new_user!(
+          "**Target Language Code**: #{target_lang}\n\n" <>
+          "**Units to translate into #{target_lang}**:\n#{source}"
+        )
+      ]
+
+      run_translation_loop(llm, initial_messages, expected_keys, 3, selected_url)
     end
   end
 
-  defp call_llm(model, messages, url) do
-    case ChatOpenAI.call(model, messages) do
+  defp run_translation_loop(llm, messages, expected_keys, retries_left, url) do
+    case ChatOpenAI.call(llm, messages) do
       {:ok, response} ->
-        if url, do: LlmPool.checkin(url)
-        {:ok, response}
+        content_text = extract_text(response)
+
+        case validate_and_parse(content_text, expected_keys) do
+          {:ok, data} ->
+            if url, do: LlmPool.checkin(url)
+            {:ok, data, serialize_response(response)}
+
+          {:error, feedback} when retries_left > 0 ->
+            Logger.warning("Translation validation failed. Retries left: #{retries_left}. Feedback: #{feedback}")
+            new_messages = messages ++ [
+              Message.new_assistant!(content_text),
+              Message.new_user!("Your previous response had errors: #{feedback}. Please correct them and return the full JSON object again.")
+            ]
+            run_translation_loop(llm, new_messages, expected_keys, retries_left - 1, url)
+
+          {:error, _feedback} ->
+            if url, do: LlmPool.checkin(url)
+            case parse_best_effort(content_text) do
+              {:ok, data} -> {:ok, data, serialize_response(response)}
+              _ -> {:ok, content_text, serialize_response(response)}
+            end
+        end
 
       {:error, reason} ->
         if url, do: LlmPool.report_failure(url)
@@ -38,35 +79,93 @@ defmodule DocCoffeeLite.Translation.LlmClient do
     end
   end
 
-  defp messages_for_translation(source, target_lang) do
-    [
-      Message.new_system!(
-        "Translate the user content into #{target_lang}. " <>
-          "Preserve placeholders and markup exactly, unless instructed otherwise. " <>
-          "Return only the translation."
-      ),
-      Message.new_user!(source)
-    ]
+  defp validate_and_parse(text, expected_keys) do
+    case Jason.decode(text) do
+      {:ok, %{"translations" => list}} when is_list(list) ->
+        parsed = parse_tagged_list(list)
+        missing_keys = Enum.reject(expected_keys, &Map.has_key?(parsed, &1))
+
+        cond do
+          length(list) != length(expected_keys) ->
+            {:error, "Expected #{length(expected_keys)} units, but got #{length(list)}."}
+
+          missing_keys != [] ->
+            {:error, "The following tags are missing or malformed: #{Enum.join(missing_keys, ", ")}."}
+
+          true ->
+            {:ok, parsed}
+        end
+
+      _ -> {:error, "Invalid JSON format or missing 'translations' key."}
+    end
   end
 
-  defp build_model(%{} = snapshot, usage_type) do
+  defp parse_tagged_list(list) do
+    Enum.reduce(list, %{}, fn entry, acc ->
+      # Strict regex for unified key format [a-z0-9_]+
+      case Regex.run(~r/\[\[([a-z0-9_]+)\]\](.*?)\[\[\/\1\]\]/s, entry) do
+        [_, key, text] -> Map.put(acc, key, String.trim(text))
+        _ -> acc
+      end
+    end)
+  end
+
+  defp parse_best_effort(text) do
+    case Jason.decode(text) do
+      {:ok, %{"translations" => list}} when is_list(list) -> {:ok, parse_tagged_list(list)}
+      _ -> :error
+    end
+  end
+
+  defp extract_val(%{"translated_text" => t}), do: t
+  defp extract_val(%{"translation" => t}), do: t
+  defp extract_val(%{"text" => t}), do: t
+  defp extract_val(%{} = map) do
+    # Fallback: if it's a map, try to find any string value that looks like a translation
+    Enum.find_value(map, fn
+      {_k, v} when is_binary(v) and v != "" -> v
+      _ -> nil
+    end) || inspect(map)
+  end
+  defp extract_val(v) when is_binary(v), do: v
+  defp extract_val(v), do: inspect(v)
+
+  defp translations_schema_payload do
+    %{
+      "type" => "json_schema",
+      "json_schema" => %{
+        "name" => "translation_response",
+        "strict" => true,
+        "schema" => %{
+          "type" => "object",
+          "properties" => %{
+            "translations" => %{
+              "type" => "array",
+              "items" => %{"type" => "string"}
+            }
+          },
+          "required" => ["translations"],
+          "additionalProperties" => false
+        }
+      }
+    }
+  end
+
+  defp build_model_config(%{} = snapshot, usage_type) do
     case resolve_config(snapshot, usage_type) do
       nil ->
         {:error, :missing_llm_config}
 
       config ->
         config = normalize_config_map(config)
-        
-        # Priority: If it is the 'env' fallback, always re-check System env for LIVE_LLM_SERVER
-        # to support real-time changes without re-creating the run.
-        raw_url = 
+
+        raw_url =
           if config["id"] == "env" do
             System.get_env("LIVE_LLM_SERVER") || config["base_url"]
           else
             config["base_url"]
           end
 
-        # Smart checkout from LlmPool if multiple URLs exist (supports list or comma-string)
         selected_url = LlmPool.checkout(raw_url)
         endpoint = endpoint_from_base_url(selected_url)
 
@@ -74,15 +173,13 @@ defmodule DocCoffeeLite.Translation.LlmClient do
           %{
             endpoint: endpoint,
             model: config["model"],
-            receive_timeout: 600_000
+            receive_timeout: 600_000,
+            temperature: 0
           }
           |> maybe_put(:api_key, config["api_key"])
           |> Map.merge(settings_to_langchain_attrs(config["settings"]))
 
-        case ChatOpenAI.new(attrs) do
-          {:ok, model} -> {:ok, model, selected_url}
-          error -> error
-        end
+        {:ok, attrs, selected_url}
     end
   end
 
@@ -132,7 +229,7 @@ defmodule DocCoffeeLite.Translation.LlmClient do
   defp maybe_put(attrs, key, value), do: Map.put(attrs, key, value)
 
   defp extract_text([%Message{} = first | _]), do: extract_text(first)
-  
+
   defp extract_text(%Message{content: content}) when is_list(content) do
     content
     |> Enum.map(fn
@@ -146,14 +243,26 @@ defmodule DocCoffeeLite.Translation.LlmClient do
   defp extract_text(%{content: content}) when is_binary(content), do: content
   defp extract_text(_), do: ""
 
+  defp serialize_response([%Message{} = first | _]), do: serialize_response(first)
+
   defp serialize_response(%Message{} = message) do
+    metadata =
+      case message.metadata do
+        %{} = map -> Map.new(map, fn {k, v} -> {to_string(k), sanitize_metadata_value(v)} end)
+        _ -> %{}
+      end
+
     %{
       "role" => to_string(message.role),
-      "content" => message.content,
+      "content" => extract_text(message),
       "status" => to_string(message.status),
-      "metadata" => Map.from_struct(message.metadata)
+      "metadata" => metadata
     }
   end
+
+  defp sanitize_metadata_value(%_{} = struct), do: Map.from_struct(struct)
+  defp sanitize_metadata_value(%{} = map), do: map
+  defp sanitize_metadata_value(other), do: other
 
   defp serialize_response(other) do
     %{"raw" => inspect(other)}

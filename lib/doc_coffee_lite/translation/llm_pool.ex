@@ -44,7 +44,7 @@ defmodule DocCoffeeLite.Translation.LlmPool do
 
   @impl true
   def init(_) do
-    # state: %{url => %{status: :idle | :busy, last_fail: nil, usage_count: 0}}
+    # state: %{url => %{status: :idle | :busy, last_fail: nil, usage_count: 0, last_checkout: datetime | nil}}
     {:ok, %{}}
   end
 
@@ -52,30 +52,42 @@ defmodule DocCoffeeLite.Translation.LlmPool do
   def handle_call({:checkout, urls}, _from, state) do
     # Initialize unknown URLs
     state = Enum.reduce(urls, state, fn url, acc ->
-      Map.put_new(acc, url, %{status: :idle, last_fail: nil, usage_count: 0})
+      Map.put_new(acc, url, %{status: :idle, last_fail: nil, usage_count: 0, last_checkout: nil})
     end)
 
-    # 1. Filter healthy URLs
+    # 1. Filter healthy URLs AND auto-release stale ones (10 mins)
     now = DateTime.utc_now()
     healthy_urls = Enum.filter(urls, fn url ->
-      case state[url].last_fail do
-        nil -> true
-        time -> DateTime.diff(now, time) > 60
-      end
+      is_stale = 
+        case state[url].last_checkout do
+          nil -> false
+          time -> DateTime.diff(now, time) > 600 # 10 minutes
+        end
+
+      is_healthy = 
+        case state[url].last_fail do
+          nil -> true
+          time -> DateTime.diff(now, time) > 60
+        end
+
+      is_healthy or is_stale
     end)
 
     candidates = if healthy_urls == [], do: urls, else: healthy_urls
 
-    # 2. Select the one with LEAST usage among idle ones
-    # This ensures round-robin even for a single worker
+    # 2. Select the one with LEAST usage among idle (or stale) ones
     selected = 
       candidates
-      |> Enum.sort_by(fn url -> {state[url].status == :busy, state[url].usage_count} end)
+      |> Enum.sort_by(fn url -> 
+        is_busy = state[url].status == :busy and DateTime.diff(now, state[url].last_checkout || now) < 600
+        {is_busy, state[url].usage_count} 
+      end)
       |> List.first()
 
     # 3. Mark as busy and increment usage
     new_state = state
     |> put_in([selected, :status], :busy)
+    |> put_in([selected, :last_checkout], now)
     |> update_in([selected, :usage_count], &(&1 + 1))
 
     {:reply, selected, new_state}

@@ -5,13 +5,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
   use Oban.Worker,
     queue: :default,
-    max_attempts: 100,
-    unique: [
-      fields: [:worker, :args],
-      keys: [:run_id, :group_id],
-      period: 60,
-      states: [:available, :scheduled, :retryable, :executing]
-    ]
+    max_attempts: 100
 
   import Ecto.Query
   require Logger
@@ -30,33 +24,35 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"run_id" => run_id, "group_id" => group_id} = args}) do
-    batch_size = normalize_batch_size(Map.get(args, "batch_size"))
+    # 1. Configuration from Env
+    max_units = String.to_integer(System.get_env("LLM_BATCH_MAX_UNITS", "10"))
+    max_chars = String.to_integer(System.get_env("LLM_BATCH_MAX_CHARS", "2000"))
     strategy = Map.get(args, "strategy", "noop")
 
     with {:ok, run, group, project} <- load_state(run_id, group_id),
          {:ok, group} <- ensure_active(run, group, project) do
       
-      # 1. Ensure group is marked as running
+      # 2. Ensure group is marked as running
       {:ok, group} = ensure_group_running(group)
       
-      # 2. Fetch one batch
-      units = fetch_units(group, batch_size)
+      # 3. Fetch candidates (we fetch max_units to try and batch them)
+      units = fetch_units(group, max_units)
       num_units = length(units)
       
       if num_units == 0 do
         finalize_group(group)
       else
-        # 3. Process the batch
-        case process_units(run, group, units, strategy) do
-          {:ok, _group} ->
-            # 4. Check if there is more work to do
-            # Re-enqueue if we filled a full batch OR if DB says more exist
-            if num_units == batch_size or has_more_units?(group.id) do
-              # 5. Enqueue the NEXT batch job
+        # 4. Form a "True Batch" based on char limits
+        {batch_to_process, _remaining} = build_sub_batch(units, max_chars)
+        
+        # 5. Process the batch in one go
+        case process_true_batch(run, group, batch_to_process, strategy, project) do
+          :ok ->
+            # 6. Re-enqueue if we filled a full batch OR if DB says more exist
+            if num_units == max_units or has_more_units?(group.id) do
               __MODULE__.new(args) |> Oban.insert()
               :ok
             else
-              # Truly finished
               {:ok, _, group, _} = load_state(run_id, group_id)
               finalize_group(group)
             end
@@ -73,49 +69,89 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
         {:snooze, @pause_snooze_seconds}
       
       {:error, :not_found} ->
-        # Run or group deleted
         :ok
     end
   end
 
-  # Remove process_group/5 entirely as it is no longer used
-
-  defp process_units(run, group, units, strategy) do
-    Enum.reduce_while(units, {:ok, group}, fn unit, {:ok, group} ->
-      case process_unit(run, group, unit, strategy) do
-        {:ok, group} -> {:cont, {:ok, group}}
-        {:error, reason} -> {:halt, {:error, reason}}
+  defp build_sub_batch(units, max_chars) do
+    Enum.reduce_while(units, {[], 0}, fn unit, {acc, current_chars} ->
+      unit_len = String.length(unit.source_text || "")
+      new_total = current_chars + unit_len
+      
+      cond do
+        acc == [] -> # Always include at least one unit
+          {:cont, {[unit], unit_len}}
+        new_total <= max_chars -> 
+          {:cont, {acc ++ [unit], new_total}}
+        true -> 
+          {:halt, {acc, current_chars}}
       end
     end)
+    |> then(fn {acc, _} -> {acc, units -- acc} end)
   end
 
-  defp process_unit(run, group, unit, strategy) do
-    # Reload project on each unit to get the latest target_lang and state
-    project = Repo.get(Project, run.project_id)
+  defp process_true_batch(run, group, units, "llm", project) do
+    # 1. Mark all as translating
+    Enum.each(units, &set_unit_status(&1, "translating"))
+
+    # 2. Combine sources: [[p_1]]Source[[/p_1]]\n[[p_2]]... 
+    combined_source = 
+      units 
+      |> Enum.map(fn u -> "[[#{u.unit_key}]]#{u.source_text}[[/#{u.unit_key}]]" end)
+      |> Enum.join("\n")
+
+    target_lang = project.target_lang || "Korean"
+    expected_keys = Enum.map(units, & &1.unit_key)
+
+    # 3. Call LLM once
+    case LlmClient.translate(run.llm_config_snapshot, combined_source, usage_type: :translate, target_lang: target_lang, expected_keys: expected_keys) do
+      {:ok, result, llm_response} ->
+        # 4. Parse and save each unit
+        Enum.each(units, fn unit ->
+          # Result can be a map (structured) or a string (raw blob)
+          translated_text = 
+            case result do
+              %{} = map -> Map.get(map, unit.unit_key) || unit.source_text
+              blob when is_binary(blob) -> extract_unit_content(blob, unit.unit_key) || unit.source_text
+            end
+
+          translated_markup = DocCoffeeLite.Translation.Placeholder.restore(translated_text, unit.placeholders || %{})
+          
+          save_translation_result(run, unit, {translated_text, translated_markup, llm_response}, "llm")
+          set_unit_status(unit, "translated")
+          advance_group_cursor(group, unit)
+        end)
+        
+        DocCoffeeLite.Translation.update_project_progress(run.project_id)
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Batch translation failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp process_true_batch(run, group, units, _strategy, _project) do
+    # Noop strategy: individual processing is fine
+    Enum.each(units, fn unit ->
+      translation_result = {unit.source_text || "", unit.source_markup || "", %{}}
+      save_translation_result(run, unit, translation_result, "noop")
+      set_unit_status(unit, "translated")
+      advance_group_cursor(group, unit)
+    end)
+    DocCoffeeLite.Translation.update_project_progress(run.project_id)
+    :ok
+  end
+
+  defp extract_unit_content(blob, unit_key) do
+    # Regex to find content between [[key]] and [[/key]]
+    escaped_key = Regex.escape(unit_key)
+    # Correct way to build regex with dynamic content in Elixir
+    {:ok, regex} = Regex.compile("\\[\\[#{escaped_key}\\]\\](.*?)\\s*\\[\\[\\/#{escaped_key}\\]\\]", "s")
     
-    # 1. Double check if we should still be running
-    case ensure_active(run, group, project) do
-      {:ok, _group} ->
-        # 2. Mark as translating
-        {:ok, unit} = set_unit_status(unit, "translating")
-
-        # 3. Perform translation
-        translation_result =
-          case strategy do
-            "llm" -> llm_translate(run, unit, project)
-            _ -> {unit.source_text || "", unit.source_markup || "", %{}}
-          end
-
-        # 4. Save result
-        with {:ok, _block} <- save_translation_result(run, unit, translation_result, strategy),
-             {:ok, _unit} <- set_unit_status(unit, "translated"),
-             {:ok, group} <- advance_group_cursor(group, unit) do
-          DocCoffeeLite.Translation.update_project_progress(run.project_id)
-          {:ok, group}
-        end
-
-      {:pause, group} ->
-        {:halt, {:pause, group}}
+    case Regex.run(regex, blob) do
+      [_, content] -> String.trim(content)
+      _ -> nil
     end
   end
 
@@ -198,7 +234,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       run.status == "paused" -> pause_group(group)
       project.status != "running" -> pause_group(group)
       run.status != "running" -> pause_group(group)
-      true -> {:ok, group} # Simplified: resume_group_if_needed removed for brevity or can be added
+      true -> {:ok, group}
     end
   end
 
@@ -227,21 +263,6 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     {1, _} = from(u in TranslationUnit, where: u.id == ^unit.id)
              |> Repo.update_all(set: [status: status, updated_at: DateTime.utc_now()])
     {:ok, %{unit | status: status}}
-  end
-
-  defp llm_translate(run, unit, project) do
-    source = unit.source_text # Use protected text instead of raw markup
-    target_lang = project.target_lang || "Korean"
-
-    case LlmClient.translate(run.llm_config_snapshot, source, usage_type: :translate, target_lang: target_lang) do
-      {:ok, translated_text, llm_response} ->
-        # Restore HTML tags from [[p1]] placeholders
-        translated_markup = DocCoffeeLite.Translation.Placeholder.restore(translated_text, unit.placeholders || %{})
-        {translated_text, translated_markup, llm_response}
-
-      {:error, reason} ->
-        {unit.source_text, unit.source_markup, %{"error" => inspect(reason)}}
-    end
   end
 
   defp normalize_batch_size(nil), do: @default_batch_size

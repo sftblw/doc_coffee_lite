@@ -8,9 +8,15 @@ defmodule DocCoffeeLite.Translation.Placeholder do
   Example: "Hello <b>World</b>" -> "Hello [[1]]World[[/1]]"
   """
   def protect(markup) when is_binary(markup) do
-    # Regex to capture HTML tags: opening, closing, or self-closing
-    # Groups: 1: full tag, 2: "/" if closing, 3: tag name, 4: "/" if self-closing
-    regex = ~r/<(\/?)([a-zA-Z0-9:]+)(?:\s+[^>]*?)?(\/?)>/
+    # 1. Pre-protect literal [[ and ]] already in source text
+    markup = 
+      markup
+      |> String.replace("[[", "&#91;&#91;")
+      |> String.replace("]]", "&#93;&#93;")
+
+    # 2. Regex to capture HTML tags: opening, closing, or self-closing
+    # Tighten tag name regex (removed colon)
+    regex = ~r/<(\/?)([a-zA-Z0-9]+)(?:\s+[^>]*?)?(\/?)>/
     
     tags = Regex.scan(regex, markup, capture: :all)
     
@@ -55,18 +61,24 @@ defmodule DocCoffeeLite.Translation.Placeholder do
 
   @doc """
   Restores original tags from paired placeholders.
-  Supports semantic tags like [[p1]], [[/p1]], and [[img1/]].
+  Supports semantic tags like [[p_1]], [[/p_1]], and [[img_1/]].
   """
   def restore(nil, _), do: ""
   def restore(text, mapping) when is_map(mapping) do
-    # Sort keys by length descending to avoid partial replacement issues (e.g., [[p10]] vs [[p1]])
+    # Sort keys by length descending to avoid partial replacement issues
     sorted_keys = 
       Map.keys(mapping) 
       |> Enum.sort_by(&String.length/1, :desc)
 
-    Enum.reduce(sorted_keys, text, fn key, acc ->
+    # 3. Restore placeholders first
+    restored = Enum.reduce(sorted_keys, text, fn key, acc ->
       tag = Map.get(mapping, key)
       String.replace(acc, "[[#{key}]]", tag)
     end)
+
+    # 4. Final step: Restore original literal brackets
+    restored
+    |> String.replace("&#91;&#91;", "[[")
+    |> String.replace("&#93;&#93;", "]]")
   end
 end
