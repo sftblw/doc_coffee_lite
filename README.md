@@ -20,7 +20,7 @@ Some considerations and decisions is made by me - parallel structuring, translat
 
 anyway, you'll need...
 
-1. [mise](https://mise.jdx.dev/) for installing elixir and erlang BEAM.
+1. [mise](https://mise.jdx.dev/) for installing elixir and erlang BEAM. `mise install`.
 2. then, `docker-compose up -d`
 3. then `.env`
 4. then `mix deps.get`, `mix ecto.setup` or `mix ecto.reset`, `mix phx.server`
