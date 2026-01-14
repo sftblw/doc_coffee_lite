@@ -76,7 +76,7 @@ defmodule DocCoffeeLite.Translation.Export do
       {:ok, doc} ->
         {updated_doc, count} = 
           Floki.traverse_and_update(doc, 0, fn
-            {_tag, attrs, _children} = node, count ->
+            {_tag, attrs, _children} = node, count when is_list(attrs) ->
               case List.keyfind(attrs, "data-unit-id", 0) do
                 {"data-unit-id", id} ->
                   case Map.get(trans_map, id) do

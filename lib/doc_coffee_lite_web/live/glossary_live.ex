@@ -13,8 +13,6 @@ defmodule DocCoffeeLiteWeb.GlossaryLive do
     {"Deprecated", "deprecated"}
   ]
 
-  @default_limit 200
-
   @impl true
   def mount(%{"project_id" => project_id}, _session, socket) do
     socket =

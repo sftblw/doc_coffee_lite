@@ -41,20 +41,22 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       
       # 2. Fetch one batch
       units = fetch_units(group, batch_size)
+      num_units = length(units)
       
-      if units == [] do
+      if num_units == 0 do
         finalize_group(group)
       else
-        # 3. Process the batch (No more internal recursion)
+        # 3. Process the batch
         case process_units(run, group, units, strategy) do
           {:ok, _group} ->
             # 4. Check if there is more work to do
-            if has_more_units?(group.id) do
+            # Re-enqueue if we filled a full batch OR if DB says more exist
+            if num_units == batch_size or has_more_units?(group.id) do
               # 5. Enqueue the NEXT batch job
               __MODULE__.new(args) |> Oban.insert()
               :ok
             else
-              # Refresh and finalize if truly done
+              # Truly finished
               {:ok, _, group, _} = load_state(run_id, group_id)
               finalize_group(group)
             end
@@ -225,18 +227,6 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     {1, _} = from(u in TranslationUnit, where: u.id == ^unit.id)
              |> Repo.update_all(set: [status: status, updated_at: DateTime.utc_now()])
     {:ok, %{unit | status: status}}
-  end
-
-  defp notify([]), do: :ok
-  defp notify(notifications), do: Logger.info("Notifications: #{inspect(notifications)}") # Simplified for Lite
-
-  defp translation_metadata(unit, strategy) do
-    %{
-      "strategy" => strategy,
-      "source_hash" => unit.source_hash
-    }
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-    |> Map.new()
   end
 
   defp llm_translate(run, unit, project) do

@@ -170,9 +170,9 @@ defmodule DocCoffeeLite.Translation do
     end
 
     # Broadcast via PubSub
-    Phoenix.PubSub.broadcast(DocCoffeeLite.PubSub, "project:#{project_id}", {:progress_updated, progress})
+    Phoenix.PubSub.broadcast(DocCoffeeLite.PubSub, "project:#{project_id}", {:progress_updated, progress, completed, total})
     
-    {:ok, progress}
+    {:ok, progress, completed, total}
   end
 
   # --- Others (Ecto Boilerplate) ---
