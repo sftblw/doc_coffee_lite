@@ -152,12 +152,11 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   end
 
   defp extract_unit_content(blob, unit_key) do
-    # Regex to find content between [[key]] and [[/key]]
     escaped_key = Regex.escape(unit_key)
-    # Correct way to build regex with dynamic content in Elixir
-    {:ok, regex} = Regex.compile("\\[\\[#{escaped_key}\\]\\](.*?)\\s*\\[\\[\\/#{escaped_key}\\]\\]", "s")
+    # The pattern matches exactly from [[key]] to [[/key]]
+    pattern = "\\[\\[#{escaped_key}\\]\\](.*?)\\[\\[\\/#{escaped_key}\\]\\]"
     
-    case Regex.run(regex, blob) do
+    case Regex.run(Regex.compile!(pattern, "s"), blob) do
       [_, content] -> String.trim(content)
       _ -> nil
     end
