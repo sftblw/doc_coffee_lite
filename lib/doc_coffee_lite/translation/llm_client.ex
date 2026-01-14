@@ -8,6 +8,9 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
+  alias DocCoffeeLite.Translation.LlmPool
+
+  require Logger
 
   @type config :: map()
 
@@ -16,9 +19,22 @@ defmodule DocCoffeeLite.Translation.LlmClient do
     usage_type = Keyword.get(opts, :usage_type, :translate)
     target_lang = Keyword.get(opts, :target_lang, "Korean")
 
-    with {:ok, model} <- build_model(config, usage_type),
-         {:ok, response} <- ChatOpenAI.call(model, messages_for_translation(source, target_lang)) do
+    with {:ok, model, selected_url} <- build_model(config, usage_type),
+         _ <- Logger.info("LLM Call: [#{usage_type}] using server #{selected_url}"),
+         {:ok, response} <- call_llm(model, messages_for_translation(source, target_lang), selected_url) do
       {:ok, extract_text(response), serialize_response(response)}
+    end
+  end
+
+  defp call_llm(model, messages, url) do
+    case ChatOpenAI.call(model, messages) do
+      {:ok, response} ->
+        if url, do: LlmPool.checkin(url)
+        {:ok, response}
+
+      {:error, reason} ->
+        if url, do: LlmPool.report_failure(url)
+        {:error, reason}
     end
   end
 
@@ -40,7 +56,19 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
       config ->
         config = normalize_config_map(config)
-        endpoint = endpoint_from_base_url(config["base_url"])
+        
+        # Priority: If it is the 'env' fallback, always re-check System env for LIVE_LLM_SERVER
+        # to support real-time changes without re-creating the run.
+        raw_url = 
+          if config["id"] == "env" do
+            System.get_env("LIVE_LLM_SERVER") || config["base_url"]
+          else
+            config["base_url"]
+          end
+
+        # Smart checkout from LlmPool if multiple URLs exist (supports list or comma-string)
+        selected_url = LlmPool.checkout(raw_url)
+        endpoint = endpoint_from_base_url(selected_url)
 
         attrs =
           %{
@@ -51,7 +79,10 @@ defmodule DocCoffeeLite.Translation.LlmClient do
           |> maybe_put(:api_key, config["api_key"])
           |> Map.merge(settings_to_langchain_attrs(config["settings"]))
 
-        ChatOpenAI.new(attrs)
+        case ChatOpenAI.new(attrs) do
+          {:ok, model} -> {:ok, model, selected_url}
+          error -> error
+        end
     end
   end
 

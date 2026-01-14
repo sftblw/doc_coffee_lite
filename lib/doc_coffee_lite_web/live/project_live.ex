@@ -34,8 +34,12 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
   @impl true
   def handle_info({:progress_updated, progress}, socket) do
-    project = socket.assigns.project
-    {:noreply, assign(socket, :project, %{project | progress: progress})}
+    if progress == 100 do
+      {:noreply, reload_project(socket)}
+    else
+      project = socket.assigns.project
+      {:noreply, assign(socket, :project, %{project | progress: progress})}
+    end
   end
 
   @impl true

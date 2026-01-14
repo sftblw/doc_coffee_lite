@@ -90,10 +90,17 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
   end
 
   defp env_fallback do
-    server = System.get_env("LIVE_LLM_SERVER")
+    server_env = System.get_env("LIVE_LLM_SERVER")
     model = System.get_env("LIVE_LLM_MODEL")
 
-    if server && model do
+    if server_env && model do
+      # Support multiple servers separated by comma
+      servers = 
+        server_env 
+        |> String.split(",") 
+        |> Enum.map(&String.trim/1) 
+        |> Enum.reject(&(&1 == ""))
+
       %{
         id: "env",
         name: "Environment Fallback",
@@ -101,7 +108,7 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
         tier: "any",
         provider: "ollama",
         model: model,
-        base_url: server,
+        base_url: if(length(servers) == 1, do: List.first(servers), else: servers),
         api_key: "ollama",
         settings: %{},
         inserted_at: DateTime.utc_now(),

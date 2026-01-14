@@ -33,100 +33,93 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     batch_size = normalize_batch_size(Map.get(args, "batch_size"))
     strategy = Map.get(args, "strategy", "noop")
 
-    with {:ok, run, group, project} <- load_state(run_id, group_id) do
-      process_group(run, group, project, batch_size, strategy)
-    end
-  end
-
-  defp process_group(_run, %TranslationGroup{status: "ready"}, _project, _batch_size, _strategy),
-    do: :ok
-
-  defp process_group(run, group, project, batch_size, strategy) do
-    case ensure_active(run, group, project) do
-      {:ok, group} ->
-        with {:ok, group} <- ensure_group_running(group),
-             units <- fetch_units(group, batch_size) do
-          Logger.info("Fetched #{length(units)} units for group #{group.id}")
-          case units do
-            [] ->
+    with {:ok, run, group, project} <- load_state(run_id, group_id),
+         {:ok, group} <- ensure_active(run, group, project) do
+      
+      # 1. Ensure group is marked as running
+      {:ok, group} = ensure_group_running(group)
+      
+      # 2. Fetch one batch
+      units = fetch_units(group, batch_size)
+      
+      if units == [] do
+        finalize_group(group)
+      else
+        # 3. Process the batch (No more internal recursion)
+        case process_units(run, group, units, strategy) do
+          {:ok, _group} ->
+            # 4. Check if there is more work to do
+            if has_more_units?(group.id) do
+              # 5. Enqueue the NEXT batch job
+              __MODULE__.new(args) |> Oban.insert()
+              :ok
+            else
+              # Refresh and finalize if truly done
+              {:ok, _, group, _} = load_state(run_id, group_id)
               finalize_group(group)
+            end
 
-            _ ->
-              case process_units(run, group, units, strategy) do
-                {:ok, group} ->
-                  # Recurse immediately after refreshing state
-                  with {:ok, run, group, project} <- load_state(run.id, group.id) do
-                    process_group(run, group, project, batch_size, strategy)
-                  end
+          {:pause, _group} ->
+            {:snooze, @pause_snooze_seconds}
 
-                {:pause, _group} ->
-                  {:snooze, @pause_snooze_seconds}
-
-                {:error, reason} ->
-                  {:error, reason}
-              end
-          end
+          {:error, reason} ->
+            {:error, reason}
         end
-
+      end
+    else
       {:pause, _group} ->
         {:snooze, @pause_snooze_seconds}
+      
+      {:error, :not_found} ->
+        # Run or group deleted
+        :ok
     end
   end
+
+  # Remove process_group/5 entirely as it is no longer used
 
   defp process_units(run, group, units, strategy) do
     Enum.reduce_while(units, {:ok, group}, fn unit, {:ok, group} ->
-      case load_state(run.id, group.id) do
-        {:ok, run, group, project} ->
-          case ensure_active(run, group, project) do
-            {:ok, group} ->
-              case process_unit(run, group, unit, strategy, project) do
-                {:ok, group} -> {:cont, {:ok, group}}
-                {:error, reason} -> {:halt, {:error, reason}}
-              end
-
-            {:pause, group} ->
-              {:halt, {:pause, group}}
-          end
-
-        {:error, reason} ->
-          Logger.error("TranslationGroupWorker failed to refresh state: #{inspect(reason)}")
-          {:halt, {:error, reason}}
+      case process_unit(run, group, unit, strategy) do
+        {:ok, group} -> {:cont, {:ok, group}}
+        {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
 
-  defp process_unit(run, group, unit, strategy, project) do
-    Logger.info("Processing unit #{unit.id} (strategy: #{strategy})")
-    # 1. Mark as translating (quick DB update)
-    {:ok, unit} = set_unit_status(unit, "translating")
+  defp process_unit(run, group, unit, strategy) do
+    # Reload project on each unit to get the latest target_lang and state
+    project = Repo.get(Project, run.project_id)
+    
+    # 1. Double check if we should still be running
+    case ensure_active(run, group, project) do
+      {:ok, _group} ->
+        # 2. Mark as translating
+        {:ok, unit} = set_unit_status(unit, "translating")
 
-    # 2. Perform translation
-    Logger.info("Calling LLM for unit #{unit.id}...")
-    translation_result =
-      case strategy do
-        "llm" ->
-          llm_translate(run, unit, project)
+        # 3. Perform translation
+        translation_result =
+          case strategy do
+            "llm" -> llm_translate(run, unit, project)
+            _ -> {unit.source_text || "", unit.source_markup || "", %{}}
+          end
 
-        _ ->
-          Logger.info("Using noop strategy for unit #{unit.id}")
-          {unit.source_text || "", unit.source_markup || "", %{}}
-      end
+        # 4. Save result
+        with {:ok, _block} <- save_translation_result(run, unit, translation_result, strategy),
+             {:ok, _unit} <- set_unit_status(unit, "translated"),
+             {:ok, group} <- advance_group_cursor(group, unit) do
+          DocCoffeeLite.Translation.update_project_progress(run.project_id)
+          {:ok, group}
+        end
 
-    {text, _markup, _resp} = translation_result
-    Logger.info("Translation completed for unit #{unit.id} (length: #{String.length(text)})")
-
-    # 3. Save result and update status (direct updates for maximum reliability)
-    with {:ok, _block} <- save_translation_result(run, unit, translation_result, strategy),
-         {:ok, _unit} <- set_unit_status(unit, "translated"),
-         {:ok, group} <- advance_group_cursor(group, unit) do
-      # Update overall project progress
-      DocCoffeeLite.Translation.update_project_progress(run.project_id)
-      {:ok, group}
-    else
-      {:error, reason} -> 
-        Logger.error("Failed to save unit #{unit.id}: #{inspect(reason)}")
-        {:error, reason}
+      {:pause, group} ->
+        {:halt, {:pause, group}}
     end
+  end
+
+  defp has_more_units?(group_id) do
+    Repo.exists?(from u in TranslationUnit, 
+      where: u.translation_group_id == ^group_id and u.status in ^@pending_statuses)
   end
 
   defp save_translation_result(run, unit, {text, markup, resp}, strategy) do

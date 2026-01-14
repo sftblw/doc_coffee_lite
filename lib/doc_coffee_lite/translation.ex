@@ -40,17 +40,33 @@ defmodule DocCoffeeLite.Translation do
   end
 
   # --- Runtime ---
+  
+  def reset_stuck_jobs do
+    import Ecto.Query
+    {count, _} = from(j in "oban_jobs", 
+                      where: j.state == "executing" and j.worker == "DocCoffeeLite.Translation.Workers.TranslationGroupWorker")
+                 |> Repo.update_all(set: [state: "available"])
+    
+    if count > 0, do: Logger.info("Recovered #{count} stuck translation jobs.")
+    :ok
+  end
 
   def start_translation(project_id) do
     Logger.info("Starting translation for project #{project_id}")
     
     with {:ok, _} <- update_project_status_force(project_id, "running"),
          run <- get_latest_run(project_id),
+         _ <- Logger.info("Found run: #{inspect(run.id)}"),
          {:ok, run} <- ensure_run_running(run, project_id),
          {:ok, run} <- refresh_run_llm_snapshot(run),
          groups <- list_groups(project_id),
+         _ <- Logger.info("Enqueuing #{length(groups)} groups"),
          strategy <- determine_strategy(run) do
       enqueue_groups(run.id, groups, strategy)
+    else
+      err ->
+        Logger.error("Failed to start translation: #{inspect(err)}")
+        err
     end
   end
 
