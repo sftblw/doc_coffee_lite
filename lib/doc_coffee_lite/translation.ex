@@ -201,6 +201,59 @@ defmodule DocCoffeeLite.Translation do
 
   def get_translation_unit!(id), do: Repo.get!(TranslationUnit, id)
 
+  def update_translation_unit(%TranslationUnit{} = unit, attrs) do
+    unit
+    |> TranslationUnit.changeset(attrs)
+    |> Repo.update()
+  end
+
+  def list_units_for_review(project_id, opts \\ []) do
+    offset = Keyword.get(opts, :offset, 0)
+    limit = Keyword.get(opts, :limit, 100)
+    search = Keyword.get(opts, :search)
+
+    # Subquery to get the latest block translation for each unit
+    # This is a bit complex in Ecto, so simpler strategy:
+    # Preload ordered block translations and pick head.
+    
+    # Or, join with lateral? 
+    # Let's start with simple preload.
+    
+    query = from u in TranslationUnit,
+      join: g in assoc(u, :translation_group),
+      where: g.project_id == ^project_id,
+      order_by: [asc: g.position, asc: u.position],
+      offset: ^offset,
+      limit: ^limit,
+      preload: [:translation_group, block_translations: ^from(b in BlockTranslation, order_by: [desc: b.inserted_at], limit: 1)]
+
+    query = 
+      if search && search != "" do
+        pattern = "%#{search}%"
+        from [u, g] in query,
+          left_join: bt in BlockTranslation, on: bt.translation_unit_id == u.id,
+          where: ilike(u.source_text, ^pattern) or ilike(bt.translated_text, ^pattern),
+          distinct: true
+      else
+        query
+      end
+
+    Repo.all(query)
+  end
+
+  def get_latest_translation(unit) do
+    case unit.block_translations do
+      [bt | _] -> bt
+      _ -> nil
+    end
+  end
+
+  def update_block_translation(%BlockTranslation{} = bt, attrs) do
+    bt
+    |> BlockTranslation.changeset(attrs)
+    |> Repo.update()
+  end
+
   def get_translation_run!(id), do: Repo.get!(TranslationRun, id)
 
   def create_block_translation(attrs) do

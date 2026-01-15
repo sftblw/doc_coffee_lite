@@ -469,7 +469,12 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
                 <section :if={@recent_translations != []} id="recent-activity" class="mt-10">
 
-                  <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400">Recent Activity</h2>
+                  <div class="flex items-center justify-between">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400">Recent Activity</h2>
+                    <.link navigate={~p"/projects/#{@project.id}/translations"} class="text-xs font-bold uppercase tracking-widest text-indigo-500 hover:text-indigo-600 transition-colors">
+                      View All Translation
+                    </.link>
+                  </div>
 
                   <div class="mt-4 space-y-3">
 

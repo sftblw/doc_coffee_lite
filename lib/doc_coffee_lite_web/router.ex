@@ -22,6 +22,7 @@ defmodule DocCoffeeLiteWeb.Router do
     live "/", HomeLive
     live "/projects", ProjectLive.Index
     live "/projects/:project_id", ProjectLive
+    live "/projects/:project_id/translations", TranslationLive.Index
     live "/projects/:project_id/glossary", GlossaryLive
     live "/projects/:project_id/llm", ProjectLlmLive
     live "/projects/:project_id/runs/:run_id/groups/:group_id/blocks", BlockEditLive
