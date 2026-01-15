@@ -34,6 +34,12 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   end
 
   @impl true
+  def handle_info({:dirty_toggled, _unit}, socket) do
+    dirty_count = Translation.count_dirty_units(socket.assigns.project.id)
+    {:noreply, assign(socket, :dirty_count, dirty_count)}
+  end
+
+  @impl true
   def handle_event("toggle_bulk", _, socket) do
     {:noreply, assign(socket, :show_bulk, !socket.assigns.show_bulk)}
   end

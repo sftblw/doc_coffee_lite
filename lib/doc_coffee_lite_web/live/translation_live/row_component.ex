@@ -62,6 +62,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
     unit = socket.assigns.unit
     case Translation.update_translation_unit(unit, %{is_dirty: !unit.is_dirty}) do
       {:ok, updated_unit} ->
+        send(self(), {:dirty_toggled, updated_unit})
         {:noreply, assign(socket, :unit, updated_unit)}
       _ ->
         {:noreply, socket}
