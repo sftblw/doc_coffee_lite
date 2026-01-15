@@ -182,8 +182,17 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
           :not_found ->
             processed_text = resolve_text_nodes(text_nodes, translated_text)
             
-            # Clean up trailing broken tags before forcing the correct tag
-            cleaned_text = cleanup_trailing_broken_tags(processed_text)
+            # Check if source content legitimately ended with something looking like a broken tag
+            source_content = Enum.map_join(text_nodes, & &1.content)
+            
+            cleaned_text = 
+              if ends_with_broken_tag?(source_content) do
+                # It's legitimate content, keep it
+                processed_text
+              else
+                # It's likely hallucination, clean it
+                cleanup_trailing_broken_tags(processed_text)
+              end
             
             forced_tag = force_tag_string(node)
             {cleaned_text <> forced_tag, "", :error}
@@ -191,11 +200,21 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     end
   end
 
-  defp cleanup_trailing_broken_tags(text) do
-    # Removes trailing [[... that didn't close, or [[/tag...
-    # e.g. "Content [[/h" -> "Content "
-    Regex.replace(~r/\s*\[\[\/? [a-zA-Z0-9_]*$/, text, "")
-  end
+    defp ends_with_broken_tag?(text) do
+
+      Regex.match?(~r/\[\[.*$/, text)
+
+    end
+
+  
+
+    defp cleanup_trailing_broken_tags(text) do
+
+      # Removes trailing [[... that didn't close
+
+      Regex.replace(~r/\[\[.*$/, text, "")
+
+    end
 
   defp process_tag_node(%Node{type: :self_closing, full_tag_open: full_tag}, _match_str, remaining_trans) do
     {full_tag, remaining_trans, :ok}
@@ -215,7 +234,8 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
 
       :not_found ->
         # Open found, but Close missing.
-        # Clean up trailing broken tags from the content
+        # Fallback: cleaned content + forced close tag.
+        
         cleaned_content = cleanup_trailing_broken_tags(remaining_trans)
         
         {tag_open <> cleaned_content <> tag_close, "", :error}
@@ -248,7 +268,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     # Enforces "At least one double bracket" (excludes [id]).
     # \s* allows spaces around ID and slash.
     
-    # ~S"[[" matches literal [[
+    # ~S"[[ " matches literal [[
     
     # Part 1: [[ ... ]]{1,2}  (Matches [[id]] or [[id])
     # Part 2: [ ... ]]       (Matches [id]])

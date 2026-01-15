@@ -57,5 +57,25 @@ test "fails gracefully when tags are missing" do
       
       assert {:ok, "[[br_1/]]"} = AutoHealer.heal(source, trans)
     end
+
+        test "preserves legitimate broken-tag-like text in source" do
+          # Source content ends with escaped &#91;&#91;/h 
+          source = "[[p_1]]Content ending with &#91;&#91;/h[[/p_1]]"
+          # Translation preserves it but drops the closing tag
+          trans = "[[p_1]]Content ending with &#91;&#91;/h" 
+          
+          # We expect Healer to force [[/p_1]] but KEEP &#91;&#91;/h because it doesn't look like a broken tag [[...
+          assert {:error, :healing_failed, result} = AutoHealer.heal(source, trans)
+          assert result == "[[p_1]]Content ending with &#91;&#91;/h[[/p_1]]"
+        end
+    test "cleans up hallucinated broken tags" do
+      source = "[[p_1]]Content[[/p_1]]"
+      # LLM hallucinated [[/p at the end
+      trans = "[[p_1]]Content[[/p"
+      
+      # We expect Healer to remove [[/p and force [[/p_1]]
+      assert {:error, :healing_failed, result} = AutoHealer.heal(source, trans)
+      assert result == "[[p_1]]Content[[/p_1]]"
+    end
   end
 end
