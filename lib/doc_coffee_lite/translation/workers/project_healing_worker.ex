@@ -67,13 +67,10 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectHealingWorker do
           update_block(block, healed_text, unit.placeholders, "ok")
         end
         
-      {:error, _reason, fallback_text} ->
-        # Even if failed, we might want to save the fallback if it's better structurally?
-        # Or just log it.
-        # If fallback is different, we save it but mark as failed.
-        if fallback_text != block.translated_text do
-          update_block(block, fallback_text, unit.placeholders, "healing_failed")
-        end
+      {:error, %AutoHealer.HealError{} = err} ->
+        Logger.debug("Skipping AutoHeal for block #{block.id}: #{err.message}")
+        # Mark as failed in metadata but keep original text
+        update_block(block, block.translated_text, unit.placeholders, "healing_failed")
     end
   end
 

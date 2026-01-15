@@ -169,7 +169,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     {healed_text, healing_status} =
       case AutoHealer.heal(unit.source_text, text) do
         {:ok, healed} -> {healed, "ok"}
-        {:error, _reason, fallback} -> {fallback, "healing_failed"}
+        {:error, %AutoHealer.HealError{}} -> {text, "healing_failed"}
       end
 
     # 2. Restore placeholders using the HEALED text
