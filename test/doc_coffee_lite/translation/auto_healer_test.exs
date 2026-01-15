@@ -1,81 +1,74 @@
 defmodule DocCoffeeLite.Translation.AutoHealerTest do
   use ExUnit.Case, async: true
+
   alias DocCoffeeLite.Translation.AutoHealer
 
-  describe "heal/2" do
-    test "restores whitespace structure from source" do
-      source = "[[div_1]]\n  [[p_1]]Hello[[/p_1]]\n[[/div_1]]"
-      trans = "[[div_1]] [[p_1]]Annyeong[[/p_1]] [[/div_1]]"
-      
-      expected = "[[div_1]]\n  [[p_1]]Annyeong[[/p_1]]\n[[/div_1]]"
-      assert {:ok, result} = AutoHealer.heal(source, trans)
-      assert result == expected
+  defp heal!(src, dst, opts \\ []) do
+    case AutoHealer.heal(src, dst, opts) do
+      {:ok, out} -> out
+      {:error, e} -> flunk("expected ok, got error: #{inspect(e)}")
     end
+  end
 
-    test "heals malformed tags" do
-      source = "[[p_1]]Text[[/p_1]]"
-      
-      # Case 1: Missing closing bracket on open tag
-      trans1 = "[[p_1]Annyeong[[/p_1]]"
-      assert {:ok, "[[p_1]]Annyeong[[/p_1]]"} = AutoHealer.heal(source, trans1)
-      
-      # Case 2: Missing opening bracket on close tag
-      trans2 = "[[p_1]]Annyeong[/p_1]]"
-      assert {:ok, "[[p_1]]Annyeong[[/p_1]]"} = AutoHealer.heal(source, trans2)
-    end
+  test "gold -> 그대로 유지 (단, 바깥 공백은 src 기준)" do
+    src = " \n[[p_1]]Hello[[/p_1]]\n "
+    dst = "\t[[p_1]]안녕[[/p_1]]\t"
+    out = heal!(src, dst)
+    assert out == " \n[[p_1]]안녕[[/p_1]]\n "
+  end
 
-    test "handles nested structures correctly" do
-      source = "[[div_1]][[p_1]]A[[/p_1]][[p_2]]B[[/p_2]][[/div_1]]"
-      trans = "[[div_1]]  [[p_1]] A' [[/p_1]]  [[p_2]] B' [[/p_2]]  [[/div_1]]"
-      
-      # Source has no whitespace, so result should have no whitespace between tags
-      # But inner content of p_1 and p_2 comes from trans
-      expected = "[[div_1]][[p_1]] A' [[/p_1]][[p_2]] B' [[/p_2]][[/div_1]]"
-      assert {:ok, result} = AutoHealer.heal(source, trans)
-      assert result == expected
-    end
+  test "broken-left close: [/p_1]]" do
+    src = "[[p_1]]A[[/p_1]]"
+    dst = "[[p_1]]번역[/p_1]]"
+    out = heal!(src, dst)
+    assert out == "[[p_1]]번역[[/p_1]]"
+  end
 
-    test "ignores garbage outside expected structure" do
-      source = "[[p_1]]A[[/p_1]]"
-      trans = "GARBAGE [[p_1]]A'[[/p_1]] TRASH"
-      
-      assert {:ok, "[[p_1]]A'[[/p_1]]"} = AutoHealer.heal(source, trans)
-    end
-    
-test "fails gracefully when tags are missing" do
-      source = "[[p_1]]A[[/p_1]]"
-      trans = "No tags here"
-      
-      assert {:error, :healing_failed, fallback} = AutoHealer.heal(source, trans)
-      # Fallback should attempt to be structural
-      assert fallback == "[[p_1]][[/p_1]]"
-    end
+  test "broken-right open: [[p_1]" do
+    src = "[[p_1]]A[[/p_1]]"
+    dst = "[[p_1]번역[[/p_1]]"
+    out = heal!(src, dst)
+    assert out == "[[p_1]]번역[[/p_1]]"
+  end
 
-    test "handles self-closing tags" do
-      source = "[[br_1/]]"
-      trans = "Some text [[br_1/]] more text"
-      
-      assert {:ok, "[[br_1/]]"} = AutoHealer.heal(source, trans)
-    end
+  test "missing close: 없으면 생성" do
+    src = "[[p_1]]A[[/p_1]]"
+    dst = "[[p_1]]번역만있음"
+    out = heal!(src, dst)
+    assert out == "[[p_1]]번역만있음[[/p_1]]"
+  end
 
-        test "preserves legitimate broken-tag-like text in source" do
-          # Source content ends with escaped &#91;&#91;/h 
-          source = "[[p_1]]Content ending with &#91;&#91;/h[[/p_1]]"
-          # Translation preserves it but drops the closing tag
-          trans = "[[p_1]]Content ending with &#91;&#91;/h" 
-          
-          # We expect Healer to force [[/p_1]] but KEEP &#91;&#91;/h because it doesn't look like a broken tag [[...
-          assert {:error, :healing_failed, result} = AutoHealer.heal(source, trans)
-          assert result == "[[p_1]]Content ending with &#91;&#91;/h[[/p_1]]"
-        end
-    test "cleans up hallucinated broken tags" do
-      source = "[[p_1]]Content[[/p_1]]"
-      # LLM hallucinated [[/p at the end
-      trans = "[[p_1]]Content[[/p"
-      
-      # We expect Healer to remove [[/p and force [[/p_1]]
-      assert {:error, :healing_failed, result} = AutoHealer.heal(source, trans)
-      assert result == "[[p_1]]Content[[/p_1]]"
-    end
+  test "repeated close at end: [/p_1]][[/p_1]] 같은 꼬리 정리" do
+    src = "[[p_1]]A[[/p_1]]"
+    dst = "[[p_1]]번역[[/p_1]][[/p_1]]"
+    out = heal!(src, dst)
+    assert out == "[[p_1]]번역[[/p_1]]"
+  end
+
+  test "edge: early broken close then text then proper close -> 바깥(close는 늦게 매칭)" do
+    src = "[[p_1]]A[[/p_1]]"
+    dst = "[/p_1]] 야호 [[/p_1]]"
+    out = heal!(src, dst)
+    # open은 없어서 생성, close는 뒤쪽을 골라서 '야호'가 안에 남습니다.
+    assert out == "[[p_1]] 야호 [[/p_1]]"
+  end
+
+  test "nested skeleton: 중첩 구조도 src 스켈레톤 유지" do
+    src = "[[p_1]]a [[b_2]]X[[/b_2]] y[[/p_1]]"
+    dst = "[[p_1]]a [[b_2]번역X[[/b_2]] y[[/p_1]]"
+    out = heal!(src, dst)
+    assert out == "[[p_1]]a [[b_2]]번역X[[/b_2]] y[[/p_1]]"
+  end
+
+  test "fail_if_no_anchor: dst에서 태그 앵커 0개면 실패시키기" do
+    src = "[[p_1]]A[[/p_1]]"
+    dst = "그냥 텍스트만"
+    assert {:error, _} = AutoHealer.heal(src, dst, fail_if_no_anchor: true)
+  end
+
+  test "too_many_missing: 태그 생성 비율이 너무 높으면 실패시키기" do
+    src = "[[p_1]]a[[/p_1]][[p_2]]b[[/p_2]][[p_3]]c[[/p_3]]"
+    dst = "텍스트"
+    assert {:error, _} = AutoHealer.heal(src, dst, max_insert_ratio: 0.3)
   end
 end

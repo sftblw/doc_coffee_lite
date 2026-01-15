@@ -1,307 +1,476 @@
 defmodule DocCoffeeLite.Translation.AutoHealer do
   @moduledoc """
-  Restores structure and heals malformed placeholders in translated text
-  based on the original source structure.
+  Auto-heal LLM outputs that contain simplified tag tokens like [[p_1]] ... [[/p_1]].
+
+  Strategy:
+  - Source tokens (strict gold only) define the correct tag skeleton.
+  - Target tokens (lenient) are used only as anchors; all target tag tokens are dropped.
+  - Text is preserved; tags are re-inserted from source.
+  - Closing tags prefer the latest viable match (to keep text inside when duplicates exist).
+  - Missing closing tags are deferred to capture as much text as possible.
   """
 
-  @type heal_result :: {:ok, String.t()} | {:error, :healing_failed, String.t()}
-
-  defmodule Node do
-    defstruct [:id, :tag_name, :full_tag_open, :full_tag_close, :children, :type]
-    # type: :container (has children), :self_closing
+  defmodule Token do
+    @enforce_keys [:kind, :tag, :num, :raw, :start, :stop, :quality]
+    defstruct [:kind, :tag, :num, :raw, :start, :stop, :quality]
+    # kind: :open | :close | :self
+    # quality: :gold | :broken_left | :broken_right
   end
 
-  defmodule Text do
-    defstruct [:content]
+  defmodule HealError do
+    @enforce_keys [:reason, :stats]
+    defstruct [:reason, :stats, :message, :debug]
+    # reason: :source_not_well_formed | :too_many_missing | :no_anchor
   end
+
+  @type opt ::
+          {:max_insert_ratio, float()} 
+          | {:fail_if_no_anchor, boolean()}
+
+  @default_max_insert_ratio 0.70
+  @default_fail_if_no_anchor false
+
+  @ws_bytes [?\s, ?\t, ?\n, ?\r, ?\f, ?\v]
 
   @doc """
-  Heals the translated text by enforcing the structure of the source text.
-  Restores whitespace (newlines, tabs, spaces) from the source.
-  Fixes malformed tags in translation (e.g., [[p_1] -> [[p_1]]).
-  """
-  @spec heal(String.t(), String.t()) :: heal_result
-  def heal(source_text, translated_text) do
-    # 1. Parse Source into a Tree Structure
-    case parse_source(source_text) do
-      {:ok, source_tree} ->
-        # 2. Process translation against the source tree with chunking logic
-        case process_nodes(source_tree, translated_text) do
-          {:ok, healed} -> {:ok, sanitize(healed)}
-          {:error, reason, healed} -> {:error, reason, sanitize(healed)}
-        end
+  Heals `dst` to match the tag skeleton of `src`.
 
-      {:error, _reason} = err ->
-        err
+  Returns:
+    {:ok, healed}
+    {:error, %HealError{}}
+
+  Options:
+    - max_insert_ratio (default 0.70): if inserted tags exceed this ratio, error.
+    - fail_if_no_anchor (default false): if no src-tag is found in dst at all, error.
+  """
+  @spec heal(binary(), binary(), [opt()]) :: {:ok, binary()} | {:error, HealError.t()}
+  def heal(src, dst, opts \\ []) when is_binary(src) and is_binary(dst) do
+    max_insert_ratio = Keyword.get(opts, :max_insert_ratio, @default_max_insert_ratio)
+    fail_if_no_anchor = Keyword.get(opts, :fail_if_no_anchor, @default_fail_if_no_anchor)
+
+    {src_lead, _src_core, src_trail} = split_outer_ascii_ws(src)
+    dst_trimmed = trim_outer_ascii_ws(dst)
+
+    src_tokens = tokenize_strict(src)
+
+    with :ok <- validate_well_formed(src_tokens) do
+      expected = src_tokens
+      dst_tokens = tokenize_lenient(dst_trimmed)
+
+      {healed_core, stats} = 
+        rebuild_from_skeleton(expected, dst_trimmed, dst_tokens)
+
+      expected_count = length(expected)
+      inserted = stats.inserted
+      matched = stats.matched
+
+      cond do
+        expected_count > 0 and fail_if_no_anchor and matched == 0 ->
+          {:error,
+           %HealError{
+             reason: :no_anchor,
+             stats: stats,
+             message: "dst에서 src 태그 앵커를 1개도 찾지 못했습니다."
+           }}
+
+        expected_count > 0 and inserted / expected_count > max_insert_ratio ->
+          {:error,
+           %HealError{
+             reason: :too_many_missing,
+             stats: stats,
+             message: "dst 태그 손상이 심해 src 태그를 너무 많이 생성했습니다."
+           }}
+
+        true ->
+          {:ok, src_lead <> healed_core <> src_trail}
+      end
+    else
+      {:error, %HealError{} = e} -> {:error, e}
     end
   end
 
-  @doc """
-  Removes duplicate adjacent tags that might have been introduced by hallucination.
-  e.g. [[/p_1]][[/p_1]] -> [[/p_1]]
-  """
-  def sanitize(text) do
-    # Matches any tag [[...]] and replaces 2+ occurrences with 1
-    # Use lazy match to avoid eating everything between [[ and ]]
-    Regex.replace(~r/(\[\[.*?\]\])\1+/, text, "\\1")
-  end
+  # -------------------------
+  # Skeleton rebuild
+  # -------------------------
 
-  # --- Parsing Source ---
+  defp rebuild_from_skeleton(expected_tokens, dst_bin, dst_tokens) do
+    tokens = List.to_tuple(dst_tokens)
+    n = tuple_size(tokens)
 
-  defp parse_source(text) do
-    tokens = tokenize(text)
-    build_tree(tokens, [], [])
-  end
+    # deferred: list of raw closing tags that were missing and need to be appended after text
+    {out_rev, pos, j, stats, deferred} = 
+      apply_expected(expected_tokens, expected_tokens |> tl_or_empty(), dst_bin, tokens, n, 0, 0, [], %{
+        matched: 0,
+        inserted: 0,
+        dropped: 0
+      }, [])
 
-  defp tokenize(text) do
-    # Capture [[...]] tags. Relies on tags not containing ']' internally.
-    # Source tags are expected to be well-formed [[id]].
-    regex = ~r/(\[\[[^\]]+\]\])/
+    # drop remaining dst tag tokens, keep text
+    {out_rev2, pos2, _j2, stats2} = drop_rest(dst_bin, tokens, n, pos, j, out_rev, stats)
+
+    # append remaining text, THEN append deferred closing tags
+    tail_text = slice(dst_bin, pos2, byte_size(dst_bin))
+    final_rev = deferred ++ [tail_text | out_rev2]
     
-    Regex.split(regex, text, include_captures: true, trim: true)
-    |> Enum.map(fn token ->
-      # Check trimmed version for tag detection (though Source should be clean)
-      trimmed = String.trim(token)
-      if String.starts_with?(trimmed, "[[") and String.ends_with?(trimmed, "]]") do
-         inner = String.slice(trimmed, 2..-3//1) |> String.trim()
-         cond do
-           String.starts_with?(inner, "/") -> {:close, String.slice(inner, 1..-1//1), token}
-           String.ends_with?(inner, "/") -> {:self_closing, String.slice(inner, 0..-2//1), token}
-           true -> {:open, inner, token}
-         end
-      else
-         {:text, token}
-      end
+    out = Enum.reverse(final_rev) |> IO.iodata_to_binary()
+
+    {out, stats2}
+  end
+
+  defp apply_expected([], _tails, _dst, _tokens, _n, pos, j, out_rev, stats, deferred), 
+    do: {out_rev, pos, j, stats, deferred}
+
+  defp apply_expected([exp | rest], tails, dst, tokens, n, pos, j, out_rev, stats, deferred) do
+    tail_expected = tl_or_empty(tails)
+
+    chosen = 
+      choose_match_index(exp, tail_expected, tokens, n, j)
+
+    case chosen do
+      nil ->
+        # Missing tag
+        if exp.kind == :close do
+          # Defer closing tag to capture text
+          apply_expected(
+            rest,
+            tail_expected,
+            dst,
+            tokens,
+            n,
+            pos,
+            j,
+            out_rev,
+            %{stats | inserted: stats.inserted + 1},
+            [exp.raw | deferred]
+          )
+        else
+          # Open/Self tag missing: Flush deferred, then insert this tag
+          out_rev_flushed = [exp.raw | deferred ++ out_rev]
+          
+          apply_expected(
+            rest,
+            tail_expected,
+            dst,
+            tokens,
+            n,
+            pos,
+            j,
+            out_rev_flushed,
+            %{stats | inserted: stats.inserted + 1},
+            []
+          )
+        end
+
+      k ->
+        # Matched tag
+        # consume and drop dst tag tokens until k
+        {out_rev1, pos1, _j1, stats1} = drop_until(dst, tokens, pos, j, k, out_rev, stats)
+
+        tok = elem(tokens, k)
+        
+        # keep text before matched token, then flush deferred, then insert exp.raw
+        pre_text = slice(dst, pos1, tok.start)
+        out_rev2 = [exp.raw | deferred ++ [pre_text | out_rev1]]
+
+        apply_expected(
+          rest,
+          tail_expected,
+          dst,
+          tokens,
+          n,
+          tok.stop,
+          k + 1,
+          out_rev2,
+          %{stats1 | matched: stats1.matched + 1},
+          []
+        )
+    end
+  end
+
+  defp choose_match_index(%Token{kind: kind} = exp, tail_expected, tokens, n, j) do
+    candidates = find_candidates(exp, tokens, n, j)
+
+    case kind do
+      :close ->
+        candidates
+        |> Enum.reverse()
+        |> Enum.find(fn k -> can_match_tail?(tail_expected, tokens, n, k + 1) end)
+
+      :open ->
+        candidates
+        |> Enum.find(fn k -> can_match_tail?(tail_expected, tokens, n, k + 1) end)
+
+      :self ->
+        candidates
+        |> Enum.find(fn k -> can_match_tail?(tail_expected, tokens, n, k + 1) end)
+    end
+  end
+
+  defp can_match_tail?([], _tokens, _n, _start), do: true
+
+  defp can_match_tail?([exp | rest], tokens, n, start) do
+    k = find_first_match(exp, tokens, n, start)
+    if is_nil(k), do: false, else: can_match_tail?(rest, tokens, n, k + 1)
+  end
+
+  defp find_first_match(exp, tokens, n, start) do
+    Enum.reduce_while(start..(n - 1), nil, fn i, _acc ->
+      if match_token?(exp, elem(tokens, i)), do: {:halt, i}, else: {:cont, nil}
     end)
   end
 
-  defp build_tree([], _stack, acc) do
-    {:ok, Enum.reverse(acc)}
+  defp find_candidates(exp, tokens, n, j) do
+    if j >= n do
+      []
+    else
+      Enum.reduce(j..(n - 1), [], fn i, acc ->
+        if match_token?(exp, elem(tokens, i)), do: [i | acc], else: acc
+      end)
+      |> Enum.reverse()
+    end
   end
 
-  defp build_tree([token | rest], stack, acc) do
-    case token do
-      {:text, content} ->
-        build_tree(rest, stack, [%Text{content: content} | acc])
+  defp match_token?(%Token{kind: k, tag: t, num: n}, %Token{kind: k2, tag: t2, num: n2}),
+    do: k == k2 and t == t2 and n == n2
 
-      {:self_closing, id, full_tag} ->
-        node = %Node{
-          id: id,
-          tag_name: id,
-          full_tag_open: full_tag,
-          type: :self_closing,
-          children: []
-        }
-        build_tree(rest, stack, [node | acc])
+  defp drop_until(_dst, _tokens, pos, j, k, out_rev, stats) when j >= k,
+    do: {out_rev, pos, j, stats}
 
-      {:open, id, full_tag} ->
-        build_tree(rest, [{id, full_tag, acc} | stack], [])
+  defp drop_until(dst, tokens, pos, j, k, out_rev, stats) do
+    tok = elem(tokens, j)
+    # keep text before this token; drop the token itself
+    pre = slice(dst, pos, tok.start)
+    out_rev2 = [pre | out_rev]
+    drop_until(dst, tokens, tok.stop, j + 1, k, out_rev2, %{stats | dropped: stats.dropped + 1})
+  end
 
-      {:close, id, full_tag} ->
-        case stack do
-          [{parent_id, parent_open, parent_acc} | stack_rest] ->
-            if parent_id == id do
-              children = Enum.reverse(acc)
-              node = %Node{
-                id: id,
-                full_tag_open: parent_open,
-                full_tag_close: full_tag,
-                children: children,
-                type: :container
-              }
-              build_tree(rest, stack_rest, [node | parent_acc])
-            else
-              # Mismatch fallback
-              build_tree(rest, stack, [%Text{content: full_tag} | acc])
+  defp drop_rest(_dst, _tokens, n, pos, j, out_rev, stats) when j >= n,
+    do: {out_rev, pos, j, stats}
+
+  defp drop_rest(dst, tokens, n, pos, j, out_rev, stats) do
+    tok = elem(tokens, j)
+    pre = slice(dst, pos, tok.start)
+    out_rev2 = [pre | out_rev]
+    drop_rest(dst, tokens, n, tok.stop, j + 1, out_rev2, %{stats | dropped: stats.dropped + 1})
+  end
+
+  defp tl_or_empty([]), do: []
+  defp tl_or_empty([_ | t]), do: t
+
+  defp slice(_bin, a, b) when a >= b, do: ""
+  defp slice(bin, a, b), do: binary_part(bin, a, b - a)
+
+  # -------------------------
+  # Validation (src)
+  # -------------------------
+
+  defp validate_well_formed(tokens) do
+    case do_validate(tokens, []) do
+      :ok -> :ok
+      {:error, reason} ->
+        {:error,
+         %HealError{
+           reason: :source_not_well_formed,
+           stats: %{reason: reason},
+           message: "src 태그가 well-formed가 아닙니다: #{inspect(reason)}"
+         }}
+    end
+  end
+
+  defp do_validate([], []), do: :ok
+  defp do_validate([], stack), do: {:error, {:unclosed, Enum.reverse(stack)}}
+
+  defp do_validate([%Token{kind: :self} | rest], stack), do: do_validate(rest, stack)
+
+  defp do_validate([%Token{kind: :open, tag: t, num: n} | rest], stack),
+    do: do_validate(rest, [{t, n} | stack])
+
+  defp do_validate([%Token{kind: :close, tag: t, num: n} | rest], [{t, n} | stack]),
+    do: do_validate(rest, stack)
+
+  defp do_validate([%Token{kind: :close, tag: t, num: n} | _rest], stack),
+    do: {:error, {:unexpected_close, {t, n}, stack}}
+
+  # -------------------------
+  # Tokenizers
+  # -------------------------
+
+  @doc "Strict: only [[tag_num]], [[/tag_num]], [[tag_num/]]"
+  def tokenize_strict(bin) when is_binary(bin) do
+    tokenize(bin, :strict)
+  end
+
+  @doc "Lenient: also accepts broken-left ([tag_num]] ...) and broken-right ([[tag_num] ...)"
+  def tokenize_lenient(bin) when is_binary(bin) do
+    tokenize(bin, :lenient)
+  end
+
+  defp tokenize(bin, mode) do
+    len = byte_size(bin)
+    do_tokenize(bin, mode, len, 0, [])
+  end
+
+  defp do_tokenize(_bin, _mode, len, i, acc) when i >= len, do: Enum.reverse(acc)
+
+  defp do_tokenize(bin, mode, len, i, acc) do
+    case :binary.at(bin, i) do
+      ?[ ->
+        cond do
+          i + 1 < len and :binary.at(bin, i + 1) == ?[ ->
+            case parse_tag_at(bin, mode, len, i, 2) do
+              {:ok, tok, next_i} -> do_tokenize(bin, mode, len, next_i, [tok | acc])
+              :error -> do_tokenize(bin, mode, len, i + 1, acc)
             end
-          [] ->
-             # Orphan fallback
-             build_tree(rest, stack, [%Text{content: full_tag} | acc])
+
+          mode == :lenient ->
+            case parse_tag_at(bin, mode, len, i, 1) do
+              {:ok, tok, next_i} -> do_tokenize(bin, mode, len, next_i, [tok | acc])
+              :error -> do_tokenize(bin, mode, len, i + 1, acc)
+            end
+
+          true ->
+            do_tokenize(bin, mode, len, i + 1, acc)
         end
+
+      _ ->
+        do_tokenize(bin, mode, len, i + 1, acc)
     end
   end
 
-  # --- Processing Translation ---
+  defp parse_tag_at(bin, mode, len, start, open_len) do
+    j = start + open_len
 
-  defp process_nodes(nodes, translated_text) do
-    # Group nodes into chunks: {[TextNodes], NextTagNode | nil}
-    chunks = chunk_nodes(nodes)
-    
-    {final_text, _, status} = 
-      Enum.reduce(chunks, {"", translated_text, :ok}, fn {text_nodes, tag_node}, {acc_out, acc_trans, acc_status} ->
-        
-        {processed_text, next_trans, chunk_status} = 
-          process_chunk(text_nodes, tag_node, acc_trans)
-        
-        new_status = if acc_status == :ok and chunk_status == :ok, do: :ok, else: :error
-        
-        {acc_out <> processed_text, next_trans, new_status}
-      end)
-
-    if status == :ok do
-      {:ok, final_text}
-    else
-      # If healing failed, we still return the best-effort final text
-      {:error, :healing_failed, final_text}
-    end
-  end
-
-  defp chunk_nodes(nodes) do
-    {current_text_nodes, chunks} = 
-      Enum.reduce(nodes, {[], []}, fn node, {txt_acc, chunk_acc} ->
-        case node do
-          %Text{} -> {[node | txt_acc], chunk_acc}
-          %Node{} -> 
-            chunk = {Enum.reverse(txt_acc), node}
-            {[], [chunk | chunk_acc]}
-        end
-      end)
-    
-    final_chunk = {Enum.reverse(current_text_nodes), nil}
-    Enum.reverse([final_chunk | chunks])
-  end
-
-  defp process_chunk(text_nodes, tag_node, translated_text) do
-    case tag_node do
-      nil ->
-        processed_text = resolve_text_nodes(text_nodes, translated_text)
-        {processed_text, "", :ok}
-
-      %Node{id: id, type: type} = node ->
-        search_type = if type == :container, do: :open, else: :self_closing
-        
-        case find_tag(translated_text, id, search_type) do
-          {:match, match_str, after_match, before_match} ->
-            processed_pre_text = resolve_text_nodes(text_nodes, before_match)
-            
-            {processed_tag, final_remaining, tag_status} = 
-              process_tag_node(node, match_str, after_match)
-              
-            {processed_pre_text <> processed_tag, final_remaining, tag_status}
-
-          :not_found ->
-            processed_text = resolve_text_nodes(text_nodes, translated_text)
-            
-            # Check if source content legitimately ended with something looking like a broken tag
-            source_content = Enum.map_join(text_nodes, & &1.content)
-            
-            cleaned_text = 
-              if ends_with_broken_tag?(source_content) do
-                # It's legitimate content, keep it
-                processed_text
-              else
-                # It's likely hallucination, clean it
-                cleanup_trailing_broken_tags(processed_text)
-              end
-            
-            forced_tag = force_tag_string(node)
-            {cleaned_text <> forced_tag, "", :error}
-        end
-    end
-  end
-
-  defp ends_with_broken_tag?(text) do
-    Regex.match?(~r/\[\[.*
-?$/, text)
-  end
-
-  defp cleanup_trailing_broken_tags(text) do
-    # Aggressively remove any tag-like structure at the end (including complete tags)
-    # This prevents duplication if find_tag failed but the tag exists.
-    Regex.replace(~r/\[\[.*
-?$/, text, "")
-  end
-
-  defp process_tag_node(%Node{type: :self_closing, full_tag_open: full_tag}, _match_str, remaining_trans) do
-    {full_tag, remaining_trans, :ok}
-  end
-
-  defp process_tag_node(%Node{type: :container, id: id, children: children, full_tag_open: tag_open, full_tag_close: tag_close}, _match_open, remaining_trans) do
-    case find_tag(remaining_trans, id, :close) do
-      {:match, _match_close, after_close, inner_content} ->
-        {healed_inner, inner_status} = 
-          case process_nodes(children, inner_content) do
-            {:ok, text} -> {text, :ok}
-            {:error, _, text} -> {text, :error}
-          end
-        
-        reconstructed = tag_open <> healed_inner <> tag_close
-        {reconstructed, after_close, inner_status}
-
-      :not_found ->
-        # Open found, but Close missing.
-        # Fallback: cleaned content + forced close tag.
-        
-        cleaned_content = cleanup_trailing_broken_tags(remaining_trans)
-        
-        {tag_open <> cleaned_content <> tag_close, "", :error}
-    end
-  end
-
-  defp resolve_text_nodes([], _), do: ""
-  defp resolve_text_nodes(text_nodes, candidate_trans) do
-    source_content = Enum.map_join(text_nodes, & &1.content)
-    if is_pure_whitespace?(source_content) do
-      source_content
-    else
-      candidate_trans
-    end
-  end
-
-  defp is_pure_whitespace?(str) do
-    String.trim(str) == ""
-  end
-  
-  defp force_tag_string(%Node{type: :self_closing, full_tag_open: t}), do: t
-  defp force_tag_string(%Node{type: :container, full_tag_open: o, full_tag_close: c}), do: o <> c
-
-  # --- Fuzzy Tag Finding ---
-
-  defp find_tag(text, id, type) do
-    escaped_id = Regex.escape(id)
-    
-    # Fuzzy Regex with Whitespace support.
-    # Enforces "At least one double bracket" (excludes [id]).
-    # \s* allows spaces around ID and slash.
-    
-    # ~S"[[ " matches literal [[
-    
-    # Part 1: [[ ... ]]{1,2}  (Matches [[id]] or [[id])
-    # Part 2: [ ... ]]       (Matches [id]])
-    
-    # Open: id
-    open_part1 = ~S"(?:\[\[\s*" <> escaped_id <> ~S"\s*/?\]{1,2})"
-    open_part2 = ~S"(?:\[\s*" <> escaped_id <> ~S"\s*/?\]\])"
-    
-    # Close: /id
-    # Note: slash might have spaces around it: [ / id ]
-    close_part1 = ~S"(?:\[\[\s*/\s*" <> escaped_id <> ~S"\s*/?\]{1,2})"
-    close_part2 = ~S"(?:\[\s*/\s*" <> escaped_id <> ~S"\s*/?\]\])"
-    
-    # Self: id/
-    self_part1 = ~S"(?:\[\[\s*" <> escaped_id <> ~S"\s*/\s*\]{1,2})"
-    self_part2 = ~S"(?:\[\s*" <> escaped_id <> ~S"\s*/\s*\]\])"
-    
-    pattern = 
-      case type do
-        :close -> "(?:" <> close_part1 <> "|" <> close_part2 <> ")"
-        :self_closing -> "(?:" <> self_part1 <> "|" <> self_part2 <> ")"
-        :open -> "(?:" <> open_part1 <> "|" <> open_part2 <> ")"
+    {is_close, j} =
+      if j < len and :binary.at(bin, j) == ?/ do
+        {true, j + 1}
+      else
+        {false, j}
       end
 
-    regex = Regex.compile!(pattern, "s")
-    
-    case Regex.run(regex, text, return: :index) do
-      [{start_idx, len}] ->
-        match_str = String.slice(text, start_idx, len)
-        
-        before_part = String.slice(text, 0, start_idx)
-        after_part = String.slice(text, start_idx + len, String.length(text))
-        
-        {:match, match_str, after_part, before_part}
-        
-      nil ->
-        :not_found
+    with {:ok, tag, j2} <- read_name(bin, len, j),
+         true <- j2 < len and :binary.at(bin, j2) == ?_ or :error,
+         {:ok, num, j3} <- read_digits(bin, len, j2 + 1),
+         {is_self, j4} <- read_optional_self_slash(bin, len, j3),
+         true <- not (is_close and is_self) or :error,
+         {:ok, quality, close_len} <- read_closer(bin, mode, len, j4, open_len) do
+      stop = j4 + close_len
+      raw = binary_part(bin, start, stop - start)
+
+      kind =
+        cond do
+          is_close -> :close
+          is_self -> :self
+          true -> :open
+        end
+
+      {:ok,
+       %Token{
+         kind: kind,
+         tag: tag,
+         num: num,
+         raw: raw,
+         start: start,
+         stop: stop,
+         quality: quality
+       }, stop}
+    else
+      _ -> :error
     end
+  end
+
+  defp read_name(bin, len, j) do
+    # allow: [A-Za-z0-9:-] at least 1 char
+    start = j
+
+    j2 =
+      advance_while(bin, len, j, fn b ->
+        (b >= ?a and b <= ?z) or (b >= ?A and b <= ?Z) or (b >= ?0 and b <= ?9) or b in [?:, ?-] 
+      end)
+
+    if j2 > start do
+      {:ok, binary_part(bin, start, j2 - start), j2}
+    else
+      :error
+    end
+  end
+
+  defp read_digits(bin, len, j) do
+    start = j
+    j2 = advance_while(bin, len, j, fn b -> b >= ?0 and b <= ?9 end)
+
+    if j2 > start do
+      num = binary_part(bin, start, j2 - start) |> String.to_integer()
+      {:ok, num, j2}
+    else
+      :error
+    end
+  end
+
+  defp read_optional_self_slash(bin, len, j) do
+    if j < len and :binary.at(bin, j) == ?/ do
+      {true, j + 1}
+    else
+      {false, j}
+    end
+  end
+
+  defp read_closer(bin, mode, len, j, open_len) do
+    cond do
+      open_len == 2 and j + 1 < len and :binary.at(bin, j) == ?] and :binary.at(bin, j + 1) == ?] ->
+        {:ok, :gold, 2}
+
+      open_len == 2 and mode == :lenient and j < len and :binary.at(bin, j) == ?] ->
+        {:ok, :broken_right, 1}
+
+      open_len == 1 and mode == :lenient and j + 1 < len and :binary.at(bin, j) == ?] and :binary.at(bin, j + 1) == ?] ->
+        {:ok, :broken_left, 2}
+
+      true ->
+        :error
+    end
+  end
+
+  defp advance_while(bin, len, j, fun) do
+    cond do
+      j >= len -> j
+      fun.(:binary.at(bin, j)) -> advance_while(bin, len, j + 1, fun)
+      true -> j
+    end
+  end
+
+  # -------------------------
+  # ASCII whitespace helpers
+  # -------------------------
+
+  defp ws_byte?(b), do: b in @ws_bytes
+
+  defp split_outer_ascii_ws(bin) do
+    len = byte_size(bin)
+    lead_len = leading_ws_len(bin, len, 0)
+    trail_len = trailing_ws_len(bin, len, len - 1, 0)
+
+    lead = binary_part(bin, 0, lead_len)
+    core = binary_part(bin, lead_len, len - lead_len - trail_len)
+    trail = binary_part(bin, len - trail_len, trail_len)
+    {lead, core, trail}
+  end
+
+  defp leading_ws_len(_bin, len, i) when i >= len, do: len
+
+  defp leading_ws_len(bin, len, i) do
+    if ws_byte?(:binary.at(bin, i)), do: leading_ws_len(bin, len, i + 1), else: i
+  end
+
+  defp trailing_ws_len(_bin, _len, i, acc) when i < 0, do: acc
+
+  defp trailing_ws_len(bin, len, i, acc) do
+    if ws_byte?(:binary.at(bin, i)),
+      do: trailing_ws_len(bin, len, i - 1, acc + 1),
+      else: acc
+  end
+
+  defp trim_outer_ascii_ws(bin) do
+    {_, core, _} = split_outer_ascii_ws(bin)
+    core
   end
 end
