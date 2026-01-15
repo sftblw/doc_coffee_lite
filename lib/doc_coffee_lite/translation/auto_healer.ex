@@ -55,14 +55,15 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
 
   defp tokenize(text) do
     # Capture [[...]] tags. Relies on tags not containing ']' internally.
+    # Source tags are expected to be well-formed [[id]].
     regex = ~r/(\[\[[^\]]+\]\])/
     
     Regex.split(regex, text, include_captures: true, trim: true)
     |> Enum.map(fn token ->
-      # Check trimmed version for tag detection
+      # Check trimmed version for tag detection (though Source should be clean)
       trimmed = String.trim(token)
       if String.starts_with?(trimmed, "[[") and String.ends_with?(trimmed, "]]") do
-         inner = String.slice(trimmed, 2..-3//1)
+         inner = String.slice(trimmed, 2..-3//1) |> String.trim()
          cond do
            String.starts_with?(inner, "/") -> {:close, String.slice(inner, 1..-1//1), token}
            String.ends_with?(inner, "/") -> {:self_closing, String.slice(inner, 0..-2//1), token}
@@ -145,7 +146,6 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     end
   end
 
-  # Helper to group consecutive text nodes with the following tag node
   defp chunk_nodes(nodes) do
     {current_text_nodes, chunks} = 
       Enum.reduce(nodes, {[], []}, fn node, {txt_acc, chunk_acc} ->
@@ -157,7 +157,6 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
         end
       end)
     
-    # Add the final chunk (trailing text nodes with no following tag)
     final_chunk = {Enum.reverse(current_text_nodes), nil}
     Enum.reverse([final_chunk | chunks])
   end
@@ -181,7 +180,6 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
             {processed_pre_text <> processed_tag, final_remaining, tag_status}
 
           :not_found ->
-            # Tag missing. Force fallback.
             processed_text = resolve_text_nodes(text_nodes, translated_text)
             forced_tag = force_tag_string(node)
             {processed_text <> forced_tag, "", :error}
@@ -190,16 +188,12 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   end
 
   defp process_tag_node(%Node{type: :self_closing, full_tag_open: full_tag}, _match_str, remaining_trans) do
-    # For self-closing, we just return the cleaned source tag.
     {full_tag, remaining_trans, :ok}
   end
 
   defp process_tag_node(%Node{type: :container, id: id, children: children, full_tag_open: tag_open, full_tag_close: tag_close}, _match_open, remaining_trans) do
-    # We found the open tag. Now find the close tag in 'remaining_trans'.
-    
     case find_tag(remaining_trans, id, :close) do
       {:match, _match_close, after_close, inner_content} ->
-        # Found the pair!
         {healed_inner, inner_status} = 
           case process_nodes(children, inner_content) do
             {:ok, text} -> {text, :ok}
@@ -210,21 +204,16 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
         {reconstructed, after_close, inner_status}
 
       :not_found ->
-        # Open found, but Close missing.
         {tag_open <> tag_close, remaining_trans, :error}
     end
   end
 
   defp resolve_text_nodes([], _), do: ""
   defp resolve_text_nodes(text_nodes, candidate_trans) do
-    # Concatenate all source text content to check its nature
     source_content = Enum.map_join(text_nodes, & &1.content)
-    
     if is_pure_whitespace?(source_content) do
-      # It is structural whitespace. Restore strict source.
       source_content
     else
-      # It contains content. Use the translation candidate.
       candidate_trans
     end
   end
@@ -239,34 +228,48 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   # --- Fuzzy Tag Finding ---
 
   defp find_tag(text, id, type) do
-    # Enumerate common malformations to avoid Regex escaping issues
-    variations = 
+    escaped_id = Regex.escape(id)
+    
+    # Fuzzy Regex with Whitespace support.
+    # Enforces "At least one double bracket" (excludes [id]).
+    # \s* allows spaces around ID and slash.
+    
+    # ~S"[[ " matches literal [[
+    
+    # Part 1: [[ ... ]]{1,2}  (Matches [[id]] or [[id])
+    # Part 2: [ ... ]]       (Matches [id]])
+    
+    # Open: id
+    open_part1 = ~S"(?:\[\[\s*" <> escaped_id <> ~S"\s*/?\]{1,2})"
+    open_part2 = ~S"(?:\[\s*" <> escaped_id <> ~S"\s*/?\]\])"
+    
+    # Close: /id
+    # Note: slash might have spaces around it: [ / id ]
+    close_part1 = ~S"(?:\[\[\s*/\s*" <> escaped_id <> ~S"\s*/?\]{1,2})"
+    close_part2 = ~S"(?:\[\s*/\s*" <> escaped_id <> ~S"\s*/?\]\])"
+    
+    # Self: id/
+    self_part1 = ~S"(?:\[\[\s*" <> escaped_id <> ~S"\s*/\s*\]{1,2})"
+    self_part2 = ~S"(?:\[\s*" <> escaped_id <> ~S"\s*/\s*\]\])"
+    
+    pattern = 
       case type do
-        :open -> 
-          ["[[#{id}]]", "[[#{id}]", "[#{id}]]", "[#{id}]", "[[#{id}/]]", "[[#{id}/]", "[#{id}/]]", "[#{id}/]"]
-        :close -> 
-          ["[[/#{id}]]", "[[/#{id}]", "[/#{id}]]", "[/#{id}]"]
-        :self_closing -> 
-          ["[[#{id}/]]", "[[#{id}/]", "[#{id}/]]", "[#{id}/]", "[[#{id}]]", "[[#{id}]", "[#{id}]]", "[#{id}]"]
+        :close -> "(?:" <> close_part1 <> "|" <> close_part2 <> ")"
+        :self_closing -> "(?:" <> self_part1 <> "|" <> self_part2 <> ")"
+        :open -> "(?:" <> open_part1 <> "|" <> open_part2 <> ")"
       end
-      
-    # Find the earliest variation in the text
-    found = 
-      variations
-      |> Enum.map(fn var -> 
-           case :binary.match(text, var) do
-             {pos, len} -> {var, pos, len}
-             :nomatch -> nil
-           end
-         end)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.min_by(fn {_, pos, _} -> pos end, fn -> nil end)
-      
-    case found do
-      {match_str, pos, len} ->
-        before_part = String.slice(text, 0, pos)
-        after_part = String.slice(text, pos + len, String.length(text))
+
+    regex = Regex.compile!(pattern, "s")
+    
+    case Regex.run(regex, text, return: :index) do
+      [{start_idx, len}] ->
+        match_str = String.slice(text, start_idx, len)
+        
+        before_part = String.slice(text, 0, start_idx)
+        after_part = String.slice(text, start_idx + len, String.length(text))
+        
         {:match, match_str, after_part, before_part}
+        
       nil ->
         :not_found
     end
