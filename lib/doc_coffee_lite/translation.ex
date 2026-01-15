@@ -212,12 +212,10 @@ defmodule DocCoffeeLite.Translation do
     limit = Keyword.get(opts, :limit, 100)
     search = Keyword.get(opts, :search)
 
-    # Subquery to get the latest block translation for each unit
-    # This is a bit complex in Ecto, so simpler strategy:
-    # Preload ordered block translations and pick head.
-    
-    # Or, join with lateral? 
-    # Let's start with simple preload.
+    # Subquery to get the latest block translation for each unit using DISTINCT ON
+    latest_bt_query = from b in BlockTranslation,
+      distinct: b.translation_unit_id,
+      order_by: [asc: b.translation_unit_id, desc: b.inserted_at]
     
     query = from u in TranslationUnit,
       join: g in assoc(u, :translation_group),
@@ -225,7 +223,7 @@ defmodule DocCoffeeLite.Translation do
       order_by: [asc: g.position, asc: u.position],
       offset: ^offset,
       limit: ^limit,
-      preload: [:translation_group, block_translations: ^from(b in BlockTranslation, order_by: [desc: b.inserted_at], limit: 1)]
+      preload: [:translation_group, block_translations: ^latest_bt_query]
 
     query = 
       if search && search != "" do

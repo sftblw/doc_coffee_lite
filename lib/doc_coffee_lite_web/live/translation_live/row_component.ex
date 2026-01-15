@@ -6,17 +6,29 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
   def update(%{unit: unit} = assigns, socket) do
     translation = Translation.get_latest_translation(unit)
     
-    {:ok,
-     socket
-     |> assign(assigns)
-     |> assign(:translation, translation)
-     |> assign(:editing, false)
-     |> assign(:draft, translation && translation.translated_text || "")}
+    socket = 
+      socket
+      |> assign(assigns)
+      |> assign(:translation, translation)
+
+    # Initialize editing/draft only if not already set (to prevent resets on re-renders)
+    socket = 
+      if Map.has_key?(socket.assigns, :editing) do
+        socket
+      else
+        socket
+        |> assign(:editing, false)
+        |> assign(:draft, translation && translation.translated_text || "")
+      end
+
+    {:ok, socket}
   end
 
   @impl true
   def handle_event("edit", _, socket) do
-    {:noreply, assign(socket, :editing, true)}
+    # Ensure draft is synced with current translation when opening
+    draft = socket.assigns.translation && socket.assigns.translation.translated_text || ""
+    {:noreply, socket |> assign(:editing, true) |> assign(:draft, draft)}
   end
 
   @impl true
@@ -28,7 +40,6 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
   def handle_event("save", %{"draft" => draft}, socket) do
     case socket.assigns.translation do
       nil ->
-        # No block translation yet, should ideally not happen in review UI but handle it
         {:noreply, put_flash(socket, :error, "No translation record to update.")}
 
       bt ->
@@ -37,6 +48,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
             {:noreply,
              socket
              |> assign(:translation, updated_bt)
+             |> assign(:draft, updated_bt.translated_text)
              |> assign(:editing, false)}
 
           {:error, _} ->
@@ -61,11 +73,11 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
     ~H"""
     <div id={"unit-#{@unit.id}"} class={[
       "group relative border-b border-stone-200 bg-white hover:bg-stone-50/50 transition-colors",
-      @unit.is_dirty && "bg-amber-50/30"
+      @unit.is_dirty && "bg-rose-50/40"
     ]}>
       <div class="flex gap-4 p-4 lg:p-6">
         <!-- Meta & Context -->
-        <div class="flex flex-col gap-2 w-24 shrink-0">
+        <div class="flex flex-col gap-2 w-28 shrink-0">
           <span class="text-[10px] font-bold uppercase tracking-wider text-stone-400">#{@unit.unit_key}</span>
           <span class="text-[9px] text-stone-400 truncate" title={@unit.translation_group.group_key}>
             {Path.basename(@unit.translation_group.group_key)}
@@ -75,13 +87,13 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
             phx-click="toggle_dirty" 
             phx-target={@myself} 
             class={[
-              "mt-2 inline-flex items-center gap-1.5 self-start rounded-full px-2 py-0.5 text-[10px] font-bold uppercase transition-all",
-              @unit.is_dirty && "bg-amber-100 text-amber-700 ring-1 ring-amber-300",
-              !@unit.is_dirty && "text-stone-300 hover:text-stone-500"
+              "mt-3 inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-[9px] font-bold uppercase tracking-tighter transition-all",
+              @unit.is_dirty && "bg-rose-600 text-white shadow-sm ring-1 ring-rose-700",
+              !@unit.is_dirty && "bg-stone-100 text-stone-400 hover:bg-stone-200 hover:text-stone-600"
             ]}
           >
-            <.icon name="hero-flag-mini" class="size-3" />
-            <%= if @unit.is_dirty, do: "Dirty" %>
+            <.icon name={if @unit.is_dirty, do: "hero-exclamation-circle-solid", else: "hero-arrow-path"} class="size-3" />
+            {if @unit.is_dirty, do: "RE-TRANSLATE", else: "MARK DIRTY"}
           </button>
         </div>
 
@@ -98,37 +110,39 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
             <div class="flex items-center justify-between">
               <p class="text-[10px] font-bold uppercase tracking-widest text-stone-300">Translation</p>
               <%= if !@editing do %>
-                <button phx-click="edit" phx-target={@myself} class="text-[10px] font-bold uppercase text-indigo-500 transition-opacity">
-                  Edit
+                <button phx-click="edit" phx-target={@myself} class="text-[10px] font-bold uppercase text-indigo-500 hover:text-indigo-700 transition-colors">
+                  Edit manually
                 </button>
               <% end %>
             </div>
 
             <%= if @editing do %>
-              <form phx-submit="save" phx-target={@myself} class="space-y-3">
-                <textarea 
-                  name="draft"
-                  rows="4" 
-                  autofocus
-                  class="w-full rounded-xl border-stone-200 text-sm leading-relaxed focus:border-indigo-500 focus:ring-indigo-500"
-                  phx-window-keydown={JS.dispatch("submit", to: "form")} 
-                  phx-key="Enter"
-                  phx-metadata='{"ctrlKey":true}'
-                ><%= @draft %></textarea>
-                <div class="flex items-center gap-3">
-                  <button type="submit" class="rounded-full bg-stone-900 px-4 py-1.5 text-[10px] font-bold uppercase text-white hover:bg-stone-800">
-                    Save <span class="ml-1 opacity-50 font-normal">Ctrl+Enter</span>
-                  </button>
-                  <button type="button" phx-click="cancel" phx-target={@myself} class="text-[10px] font-bold uppercase text-stone-400 hover:text-stone-600">
-                    Cancel
-                  </button>
-                </div>
-              </form>
+              <div class="space-y-3">
+                <form phx-submit="save" phx-target={@myself} id={"form-#{@unit.id}"}>
+                  <textarea 
+                    name="draft"
+                    rows="5" 
+                    autofocus
+                    class="w-full rounded-xl border-stone-200 text-sm leading-relaxed focus:border-indigo-500 focus:ring-indigo-500 shadow-inner bg-stone-50"
+                    phx-window-keydown={JS.dispatch("submit", to: "#form-#{@unit.id}")} 
+                    phx-key="Enter"
+                    phx-metadata='{"ctrlKey":true}'
+                  ><%= @draft %></textarea>
+                  <div class="mt-2 flex items-center gap-3">
+                    <button type="submit" class="rounded-full bg-stone-900 px-4 py-1.5 text-[10px] font-bold uppercase text-white hover:bg-stone-800 shadow-md">
+                      Save Changes <span class="ml-1 opacity-50 font-normal">Ctrl+Enter</span>
+                    </button>
+                    <button type="button" phx-click="cancel" phx-target={@myself} class="text-[10px] font-bold uppercase text-stone-400 hover:text-stone-600">
+                      Discard
+                    </button>
+                  </div>
+                </form>
+              </div>
             <% else %>
               <div 
                 phx-click="edit" 
                 phx-target={@myself}
-                class="min-h-[3rem] cursor-pointer rounded-lg border border-transparent p-1 -m-1 hover:bg-stone-50 hover:border-stone-100 text-sm leading-relaxed text-stone-900 whitespace-pre-wrap"
+                class="min-h-[4rem] cursor-pointer rounded-lg border border-dashed border-transparent p-2 -m-2 hover:bg-white hover:border-stone-200 hover:shadow-sm text-sm leading-relaxed text-stone-900 whitespace-pre-wrap transition-all"
               >
                 <%= if @translation && @translation.translated_text != "", do: @translation.translated_text, else: "---" %>
               </div>
