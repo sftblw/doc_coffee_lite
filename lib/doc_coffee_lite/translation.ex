@@ -55,6 +55,7 @@ defmodule DocCoffeeLite.Translation do
     Logger.info("Starting translation for project #{project_id}")
     
     with {:ok, _} <- update_project_status_force(project_id, "running"),
+         :ok <- prepare_dirty_units(project_id),
          run <- get_latest_run(project_id),
          _ <- Logger.info("Found run: #{inspect(run.id)}"),
          {:ok, run} <- ensure_run_running(run, project_id),
@@ -68,6 +69,33 @@ defmodule DocCoffeeLite.Translation do
         Logger.error("Failed to start translation: #{inspect(err)}")
         err
     end
+  end
+
+  defp prepare_dirty_units(project_id) do
+    # 1. Find all dirty units for this project
+    dirty_query = from u in TranslationUnit,
+      join: g in assoc(u, :translation_group),
+      where: g.project_id == ^project_id and u.is_dirty == true
+
+    dirty_units = Repo.all(dirty_query)
+
+    if dirty_units != [] do
+      # 2. Reset status to pending and is_dirty to false
+      unit_ids = Enum.map(dirty_units, & &1.id)
+      from(u in TranslationUnit, where: u.id in ^unit_ids)
+      |> Repo.update_all(set: [status: "pending", is_dirty: false, updated_at: DateTime.utc_now()])
+
+      # 3. Rewind group cursors to the minimum position of reset units
+      dirty_units
+      |> Enum.group_by(& &1.translation_group_id)
+      |> Enum.each(fn {group_id, units} ->
+        min_pos = units |> Enum.map(& &1.position) |> Enum.min()
+        from(g in TranslationGroup, where: g.id == ^group_id)
+        |> Repo.update_all(set: [cursor: min_pos, updated_at: DateTime.utc_now()])
+      end)
+    end
+
+    :ok
   end
 
   defp refresh_run_llm_snapshot(run) do
@@ -220,12 +248,18 @@ defmodule DocCoffeeLite.Translation do
     query = from u in TranslationUnit,
       join: g in assoc(u, :translation_group),
       where: g.project_id == ^project_id,
-      order_by: [asc: g.position, asc: u.position],
+      order_by: [asc: g.position, asc: u.position]
+
+    # APPLY FILTER FIRST
+    query = query |> apply_review_search_filter(search)
+
+    # THEN APPLY PAGINATION
+    query = from u in query,
       offset: ^offset,
       limit: ^limit,
       preload: [:translation_group, block_translations: ^latest_bt_query]
 
-    query |> apply_review_search_filter(search) |> Repo.all()
+    Repo.all(query)
   end
 
   defp apply_review_search_filter(query, search) do
