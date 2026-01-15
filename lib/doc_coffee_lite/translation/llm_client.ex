@@ -232,9 +232,20 @@ defmodule DocCoffeeLite.Translation.LlmClient do
   defp maybe_put(attrs, _key, ""), do: attrs
   defp maybe_put(attrs, key, value), do: Map.put(attrs, key, value)
 
-  defp extract_text([%Message{} = first | _]), do: extract_text(first)
+  defp extract_text(msg) do
+    raw_extract_text(msg)
+    |> sanitize_text()
+  end
 
-  defp extract_text(%Message{content: content}) when is_list(content) do
+  defp sanitize_text(text) do
+    text
+    |> String.replace("&#91;", "[")
+    |> String.replace("&#93;", "]")
+  end
+
+  defp raw_extract_text([%Message{} = first | _]), do: raw_extract_text(first)
+
+  defp raw_extract_text(%Message{content: content}) when is_list(content) do
     content
     |> Enum.map(fn
       %LangChain.Message.ContentPart{type: :text, content: text} -> text
@@ -243,9 +254,9 @@ defmodule DocCoffeeLite.Translation.LlmClient do
     |> Enum.join("")
   end
 
-  defp extract_text(%Message{content: content}) when is_binary(content), do: content
-  defp extract_text(%{content: content}) when is_binary(content), do: content
-  defp extract_text(_), do: ""
+  defp raw_extract_text(%Message{content: content}) when is_binary(content), do: content
+  defp raw_extract_text(%{content: content}) when is_binary(content), do: content
+  defp raw_extract_text(_), do: ""
 
   defp serialize_response([%Message{} = first | _]), do: serialize_response(first)
 
@@ -264,11 +275,11 @@ defmodule DocCoffeeLite.Translation.LlmClient do
     }
   end
 
-  defp sanitize_metadata_value(%_{} = struct), do: Map.from_struct(struct)
-  defp sanitize_metadata_value(%{} = map), do: map
-  defp sanitize_metadata_value(other), do: other
-
   defp serialize_response(other) do
     %{"raw" => inspect(other)}
   end
+
+  defp sanitize_metadata_value(%_{} = struct), do: Map.from_struct(struct)
+  defp sanitize_metadata_value(%{} = map), do: map
+  defp sanitize_metadata_value(other), do: other
 end
