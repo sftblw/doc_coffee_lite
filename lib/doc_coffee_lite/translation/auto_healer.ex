@@ -26,11 +26,24 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     case parse_source(source_text) do
       {:ok, source_tree} ->
         # 2. Process translation against the source tree with chunking logic
-        process_nodes(source_tree, translated_text)
+        case process_nodes(source_tree, translated_text) do
+          {:ok, healed} -> {:ok, sanitize(healed)}
+          {:error, reason, healed} -> {:error, reason, sanitize(healed)}
+        end
 
       {:error, _reason} = err ->
         err
     end
+  end
+
+  @doc """
+  Removes duplicate adjacent tags that might have been introduced by hallucination.
+  e.g. [[/p_1]][[/p_1]] -> [[/p_1]]
+  """
+  def sanitize(text) do
+    # Matches any tag [[...]] and replaces 2+ occurrences with 1
+    # Use lazy match to avoid eating everything between [[ and ]]
+    Regex.replace(~r/(\[\[.*?\]\])\1+/, text, "\\1")
   end
 
   # --- Parsing Source ---
@@ -46,8 +59,10 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     
     Regex.split(regex, text, include_captures: true, trim: true)
     |> Enum.map(fn token ->
-      if String.starts_with?(token, "[[") and String.ends_with?(token, "]]") do
-         inner = String.slice(token, 2..-3//1)
+      # Check trimmed version for tag detection
+      trimmed = String.trim(token)
+      if String.starts_with?(trimmed, "[[") and String.ends_with?(trimmed, "]]") do
+         inner = String.slice(trimmed, 2..-3//1)
          cond do
            String.starts_with?(inner, "/") -> {:close, String.slice(inner, 1..-1//1), token}
            String.ends_with?(inner, "/") -> {:self_closing, String.slice(inner, 0..-2//1), token}
@@ -137,8 +152,6 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
         case node do
           %Text{} -> {[node | txt_acc], chunk_acc}
           %Node{} -> 
-            # Found a tag. Complete the current chunk.
-            # Text nodes were accumulated in reverse, reverse them back.
             chunk = {Enum.reverse(txt_acc), node}
             {[], [chunk | chunk_acc]}
         end
@@ -152,38 +165,25 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   defp process_chunk(text_nodes, tag_node, translated_text) do
     case tag_node do
       nil ->
-        # No following tag. The remaining translated text belongs to these text nodes.
-        # We assume the rest of translation is content for these nodes.
         processed_text = resolve_text_nodes(text_nodes, translated_text)
         {processed_text, "", :ok}
 
       %Node{id: id, type: type} = node ->
-        # Look for this tag in translation
         search_type = if type == :container, do: :open, else: :self_closing
         
         case find_tag(translated_text, id, search_type) do
           {:match, match_str, after_match, before_match} ->
-            # 'before_match' is the content for 'text_nodes'
             processed_pre_text = resolve_text_nodes(text_nodes, before_match)
             
-            # Now process the tag itself
             {processed_tag, final_remaining, tag_status} = 
               process_tag_node(node, match_str, after_match)
               
             {processed_pre_text <> processed_tag, final_remaining, tag_status}
 
           :not_found ->
-            # Tag missing. 
-            # Fallback strategy:
-            # 1. Resolve text nodes using ALL translated text (hoping it matches).
-            # 2. Append the FORCED source tag (empty content).
-            # 3. Return error.
-            
+            # Tag missing. Force fallback.
             processed_text = resolve_text_nodes(text_nodes, translated_text)
-            
-            # Force the tag
             forced_tag = force_tag_string(node)
-            
             {processed_text <> forced_tag, "", :error}
         end
     end
@@ -200,7 +200,6 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     case find_tag(remaining_trans, id, :close) do
       {:match, _match_close, after_close, inner_content} ->
         # Found the pair!
-        # Recursively process children with the bounded inner content
         {healed_inner, inner_status} = 
           case process_nodes(children, inner_content) do
             {:ok, text} -> {text, :ok}
@@ -212,7 +211,6 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
 
       :not_found ->
         # Open found, but Close missing.
-        # Safest fallback: Empty content.
         {tag_open <> tag_close, remaining_trans, :error}
     end
   end
@@ -241,37 +239,34 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   # --- Fuzzy Tag Finding ---
 
   defp find_tag(text, id, type) do
-    escaped_id = Regex.escape(id)
-    
-    # Patterns: 
-    # Match [ or [[ + optional slashes + ID + optional slashes + ] or ]]
-    # Strict about leading/trailing slashes based on type.
-    
-    pattern = 
+    # Enumerate common malformations to avoid Regex escaping issues
+    variations = 
       case type do
+        :open -> 
+          ["[[#{id}]]", "[[#{id}]", "[#{id}]]", "[#{id}]", "[[#{id}/]]", "[[#{id}/]", "[#{id}/]]", "[#{id}/]"]
         :close -> 
-           # Must have leading slash: [ /id ]
-           "\\\[{1,2}\\\/" <> escaped_id <> "\\/?\]{1,2}"
-        :self_closing ->
-           # Must have trailing slash: [ id/ ]
-           "\\\[{1,2}" <> escaped_id <> "\\/\]{1,2}"
-        :open ->
-           # Must NOT have leading slash: [ id ]
-           "\\\[{1,2}" <> escaped_id <> "\\/?\]{1,2}" 
+          ["[[/#{id}]]", "[[/#{id}]", "[/#{id}]]", "[/#{id}]"]
+        :self_closing -> 
+          ["[[#{id}/]]", "[[#{id}/]", "[#{id}/]]", "[#{id}/]", "[[#{id}]]", "[[#{id}]", "[#{id}]]", "[#{id}]"]
       end
-
-    regex = Regex.compile!(pattern, "s")
-    
-    case Regex.run(regex, text, return: :index) do
-      [{start_idx, len}] ->
-        match_str = String.slice(text, start_idx, len)
-        
-        before_part = String.slice(text, 0, start_idx)
-        after_part = String.slice(text, start_idx + len, String.length(text))
-        
-        # Always return 3-tuple including before_part
+      
+    # Find the earliest variation in the text
+    found = 
+      variations
+      |> Enum.map(fn var -> 
+           case :binary.match(text, var) do
+             {pos, len} -> {var, pos, len}
+             :nomatch -> nil
+           end
+         end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.min_by(fn {_, pos, _} -> pos end, fn -> nil end)
+      
+    case found do
+      {match_str, pos, len} ->
+        before_part = String.slice(text, 0, pos)
+        after_part = String.slice(text, pos + len, String.length(text))
         {:match, match_str, after_part, before_part}
-        
       nil ->
         :not_found
     end

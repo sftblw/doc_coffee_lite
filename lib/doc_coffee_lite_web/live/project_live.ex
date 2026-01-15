@@ -376,7 +376,7 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
                     
                                 <button :if={@project && can_pause?(latest_run(@project))} phx-click="pause" class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm">Pause</button>
                                 
-                                <button :if={@project && latest_run(@project)} phx-click="heal_project" class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm text-stone-600 hover:bg-stone-50" title="Auto-heal structure & whitespace">Heal</button>
+                                <button :if={@project && latest_run(@project)} phx-click="heal_project" phx-disable-with="Healing..." class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm text-stone-600 hover:bg-stone-50" title="Auto-heal structure & whitespace">Heal</button>
                     
                                 
                     
