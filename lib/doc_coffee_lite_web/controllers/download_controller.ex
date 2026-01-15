@@ -8,7 +8,11 @@ defmodule DocCoffeeLiteWeb.DownloadController do
     project = Translation.get_project!(project_id)
     run = Translation.get_translation_run!(run_id)
     
-    clean_title = (project.title || "project") |> String.replace(~r/[^a-zA-Z0-9]/, "_")
+    clean_title =
+      (project.title || "project")
+      |> String.replace(~r/[^\p{L}\p{N}\s\-\_\.\(\)]/u, "_")
+      |> String.replace(~r/_+/, "_")
+      |> String.trim("_")
     lang_suffix = (project.target_lang || "unknown") |> String.downcase()
     filename = "#{clean_title}-translated-#{lang_suffix}.epub"
     path = Path.join(System.tmp_dir!(), "export-#{run.id}.epub")
