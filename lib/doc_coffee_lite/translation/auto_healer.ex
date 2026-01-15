@@ -43,7 +43,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   def sanitize(text) do
     # Matches any tag [[...]] and replaces 2+ occurrences with 1
     # Use lazy match to avoid eating everything between [[ and ]]
-    Regex.replace(~r/(\[\[.*?\]\])\1+/, text, "\\1")
+    Regex.replace(~r/(\[\[.*?\].*?)\\1+/, text, "\\1")
   end
 
   # --- Parsing Source ---
@@ -181,10 +181,20 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
 
           :not_found ->
             processed_text = resolve_text_nodes(text_nodes, translated_text)
+            
+            # Clean up trailing broken tags before forcing the correct tag
+            cleaned_text = cleanup_trailing_broken_tags(processed_text)
+            
             forced_tag = force_tag_string(node)
-            {processed_text <> forced_tag, "", :error}
+            {cleaned_text <> forced_tag, "", :error}
         end
     end
+  end
+
+  defp cleanup_trailing_broken_tags(text) do
+    # Removes trailing [[... that didn't close, or [[/tag...
+    # e.g. "Content [[/h" -> "Content "
+    Regex.replace(~r/\s*\[\[\/? [a-zA-Z0-9_]*$/, text, "")
   end
 
   defp process_tag_node(%Node{type: :self_closing, full_tag_open: full_tag}, _match_str, remaining_trans) do
@@ -204,7 +214,11 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
         {reconstructed, after_close, inner_status}
 
       :not_found ->
-        {tag_open <> tag_close, remaining_trans, :error}
+        # Open found, but Close missing.
+        # Clean up trailing broken tags from the content
+        cleaned_content = cleanup_trailing_broken_tags(remaining_trans)
+        
+        {tag_open <> cleaned_content <> tag_close, "", :error}
     end
   end
 
@@ -234,7 +248,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     # Enforces "At least one double bracket" (excludes [id]).
     # \s* allows spaces around ID and slash.
     
-    # ~S"[[ " matches literal [[
+    # ~S"[[" matches literal [[
     
     # Part 1: [[ ... ]]{1,2}  (Matches [[id]] or [[id])
     # Part 2: [ ... ]]       (Matches [id]])
