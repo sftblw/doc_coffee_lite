@@ -71,7 +71,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
   @impl true
   def render(assigns) do
     ~H"""
-    <div id={"unit-#{@unit.id}"} class={[
+    <div id={@id} class={[
       "group relative border-b border-stone-200 bg-white hover:bg-stone-50/50 transition-colors",
       @unit.is_dirty && "bg-rose-50/40"
     ]}>

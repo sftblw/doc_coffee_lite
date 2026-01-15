@@ -13,14 +13,23 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
      socket
      |> assign(:project, project)
      |> assign(:page_title, "Review: #{project.title}")
-     |> assign(:offset, 0)
      |> assign(:limit, 100)
-     |> assign(:search, "")
-     |> assign(:has_more, true)
      |> assign(:show_bulk, false)
      |> assign(:dirty_count, dirty_count)
      |> assign(:bulk_form, to_form(%{"find" => "", "replace" => ""}))
-     |> stream(:units, [])
+     |> stream(:units, [])}
+  end
+
+  @impl true
+  def handle_params(params, _url, socket) do
+    query = params["q"] || ""
+    
+    {:noreply,
+     socket
+     |> assign(:search, query)
+     |> assign(:offset, 0)
+     |> assign(:has_more, true)
+     |> stream(:units, [], reset: true)
      |> load_units()}
   end
 
@@ -31,7 +40,16 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
 
   @impl true
   def handle_event("clear_search", _, socket) do
-    handle_event("search", %{"query" => ""}, socket)
+    {:noreply, push_patch(socket, to: ~p"/projects/#{socket.assigns.project.id}/translations")}
+  end
+
+  @impl true
+  def handle_event("search", %{"query" => query}, socket) do
+    path = if query == "", 
+      do: ~p"/projects/#{socket.assigns.project.id}/translations",
+      else: ~p"/projects/#{socket.assigns.project.id}/translations?q=#{query}"
+      
+    {:noreply, push_patch(socket, to: path)}
   end
 
   @impl true
