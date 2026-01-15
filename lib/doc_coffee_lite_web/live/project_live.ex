@@ -177,31 +177,115 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
         
 
-          def handle_event("start", _params, socket) do
-
-            project = socket.assigns.project
+            def handle_event("start", _params, socket) do
 
         
 
-            with %Project{} <- project,
+              project = socket.assigns.project
 
-                 :ok <- Translation.start_translation(project.id) do
+        
 
-              {:noreply,
+          
 
-               socket
+        
 
-               |> put_flash(:info, "Translation started")
+              with %Project{} <- project,
 
-               |> reload_project()}
+        
 
-            else
+                   :ok <- Translation.start_translation(project.id) do
 
-              _ -> {:noreply, put_flash(socket, :error, "Start failed")}
+        
+
+                {:noreply,
+
+        
+
+                 socket
+
+        
+
+                 |> put_flash(:info, "Translation started")
+
+        
+
+                 |> reload_project()}
+
+        
+
+              else
+
+        
+
+                _ -> {:noreply, put_flash(socket, :error, "Start failed")}
+
+        
+
+              end
+
+        
 
             end
 
-          end
+        
+
+          
+
+        
+
+            def handle_event("reset_project", _params, socket) do
+
+        
+
+              project = socket.assigns.project
+
+        
+
+          
+
+        
+
+              with %Project{} <- project,
+
+        
+
+                   :ok <- Translation.reset_project(project.id) do
+
+        
+
+                {:noreply,
+
+        
+
+                 socket
+
+        
+
+                 |> put_flash(:info, "Project progress and translations has been reset.")
+
+        
+
+                 |> reload_project()}
+
+        
+
+              else
+
+        
+
+                _ -> {:noreply, put_flash(socket, :error, "Reset failed")}
+
+        
+
+              end
+
+        
+
+            end
+
+        
+
+          
 
         
 
@@ -422,10 +506,19 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
                   <div class="flex flex-wrap items-center gap-3">
 
-                                <button :if={@project && can_start?(@project, latest_run(@project))} phx-click="start" class="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white uppercase shadow-sm">Start</button>
+                                <button :if={@project && can_start?(@project, latest_run(@project))} phx-click="start" class="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white uppercase shadow-sm hover:bg-emerald-700 transition-colors">Start</button>
                     
-                                <button :if={@project && can_pause?(latest_run(@project))} phx-click="pause" class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm">Pause</button>
+                                <button :if={@project && can_pause?(latest_run(@project))} phx-click="pause" class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm hover:bg-stone-50 transition-colors">Pause</button>
                                 
+                                <button 
+                                  :if={@project} 
+                                  phx-click="reset_project" 
+                                  data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
+                                  class="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold uppercase shadow-sm text-rose-600 hover:bg-rose-100 transition-colors"
+                                >
+                                  Reset
+                                </button>
+
                                 <button :if={@project && latest_run(@project)} phx-click="heal_project" phx-disable-with="Healing..." class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm text-stone-600 hover:bg-stone-50" title="Auto-heal structure & whitespace">Heal</button>
                     
                                 

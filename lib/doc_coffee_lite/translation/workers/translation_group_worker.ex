@@ -26,7 +26,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   def perform(%Oban.Job{args: %{"run_id" => run_id, "group_id" => group_id} = args}) do
     # 1. Configuration from Env
     max_units = String.to_integer(System.get_env("LLM_BATCH_MAX_UNITS", "500"))
-    max_chars = String.to_integer(System.get_env("LLM_BATCH_MAX_CHARS", "2000"))
+    max_chars = String.to_integer(System.get_env("LLM_BATCH_MAX_CHARS", "4000"))
     strategy = Map.get(args, "strategy", "noop")
 
     with {:ok, run, group, project} <- load_state(run_id, group_id),
@@ -44,11 +44,16 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       else
         # 4. Form a "True Batch" based on char limits
         {batch_to_process, _remaining} = build_sub_batch(units, max_chars)
+        Logger.info("[Batch] Processing #{length(batch_to_process)} units for group #{group.id}")
         
         # 5. Process the batch in one go
         case process_true_batch(run, group, batch_to_process, strategy, project) do
           :ok ->
-            # 6. Re-enqueue if we filled a full batch OR if DB says more exist
+            # 6. Update group cursor to the next unit after this batch
+            last_unit = List.last(batch_to_process)
+            advance_group_cursor(group, last_unit)
+
+            # 7. Re-enqueue if we filled a full batch OR if DB says more exist
             if num_units == max_units or has_more_units?(group.id) do
               __MODULE__.new(args) |> Oban.insert()
               :ok
@@ -124,7 +129,6 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
           
           save_translation_result(run, unit, {translated_text, translated_markup, llm_response}, "llm")
           set_unit_status(unit, "translated")
-          advance_group_cursor(group, unit)
         end)
         
         DocCoffeeLite.Translation.update_project_progress(run.project_id)
@@ -136,13 +140,12 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     end
   end
 
-  defp process_true_batch(run, group, units, _strategy, _project) do
+  defp process_true_batch(run, _group, units, _strategy, _project) do
     # Noop strategy: individual processing is fine
     Enum.each(units, fn unit ->
       translation_result = {unit.source_text || "", unit.source_markup || "", %{}}
       save_translation_result(run, unit, translation_result, "noop")
       set_unit_status(unit, "translated")
-      advance_group_cursor(group, unit)
     end)
     DocCoffeeLite.Translation.update_project_progress(run.project_id)
     :ok

@@ -39,6 +39,35 @@ defmodule DocCoffeeLite.Translation do
     |> Repo.update()
   end
 
+  def reset_project(project_id) do
+    Repo.transaction(fn ->
+      # 1. Find all translation unit IDs for this project
+      unit_ids_query = from u in TranslationUnit,
+        join: g in assoc(u, :translation_group),
+        where: g.project_id == ^project_id,
+        select: u.id
+      
+      unit_ids = Repo.all(unit_ids_query)
+
+      # 2. Delete all block translations for these units
+      from(bt in BlockTranslation, where: bt.translation_unit_id in ^unit_ids)
+      |> Repo.delete_all()
+
+      # 3. Reset all units to pending
+      from(u in TranslationUnit, where: u.id in ^unit_ids)
+      |> Repo.update_all(set: [status: "pending", is_dirty: false, updated_at: DateTime.utc_now()])
+
+      # 4. Reset all group cursors and progress
+      from(g in TranslationGroup, where: g.project_id == ^project_id)
+      |> Repo.update_all(set: [cursor: 0, progress: 0, status: "pending", updated_at: DateTime.utc_now()])
+
+      # 5. Reset project progress and status
+      from(p in Project, where: p.id == ^project_id)
+      |> Repo.update_all(set: [progress: 0, status: "draft", updated_at: DateTime.utc_now()])
+    end)
+    :ok
+  end
+
   # --- Runtime ---
   
   def reset_stuck_jobs do
