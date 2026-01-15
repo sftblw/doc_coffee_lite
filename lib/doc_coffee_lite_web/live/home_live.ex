@@ -219,8 +219,13 @@ defmodule DocCoffeeLiteWeb.HomeLive do
 
             <div class="space-y-6 lg:col-span-5">
               <div class="rounded-3xl border border-stone-200/80 bg-white/85 p-6 shadow-sm backdrop-blur">
-                <h2 class="font-display text-xl">Recent projects</h2>
-                <div class="mt-5 space-y-4">
+                <div class="flex items-center justify-between mb-5">
+                  <h2 class="font-display text-xl">Recent projects</h2>
+                  <.link navigate={~p"/projects"} class="text-xs font-semibold uppercase tracking-wider text-stone-500 hover:text-stone-900">
+                    View all
+                  </.link>
+                </div>
+                <div class="space-y-4">
                   <%= for project <- @projects do %>
                     <div class="group rounded-2xl border border-stone-200/80 bg-white/70 p-4 transition hover:shadow-lg">
                       <div class="flex items-start justify-between gap-4">

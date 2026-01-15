@@ -20,7 +20,7 @@ defmodule DocCoffeeLiteWeb.Router do
 
     oban_dashboard "/oban"
     live "/", HomeLive
-    live "/projects", ProjectsLive
+    live "/projects", ProjectLive.Index
     live "/projects/:project_id", ProjectLive
     live "/projects/:project_id/glossary", GlossaryLive
     live "/projects/:project_id/llm", ProjectLlmLive

@@ -25,7 +25,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"run_id" => run_id, "group_id" => group_id} = args}) do
     # 1. Configuration from Env
-    max_units = String.to_integer(System.get_env("LLM_BATCH_MAX_UNITS", "10"))
+    max_units = String.to_integer(System.get_env("LLM_BATCH_MAX_UNITS", "500"))
     max_chars = String.to_integer(System.get_env("LLM_BATCH_MAX_CHARS", "2000"))
     strategy = Map.get(args, "strategy", "noop")
 
