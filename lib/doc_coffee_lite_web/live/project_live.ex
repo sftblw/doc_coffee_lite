@@ -178,29 +178,127 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
         
 
-          def handle_event("pause", _params, socket) do
-
-            project = socket.assigns.project
+            def handle_event("pause", _params, socket) do
 
         
 
-            with %Project{} <- project,
+          
 
-                 :ok <- Translation.pause_translation(project.id) do
+        
 
-              {:noreply, socket |> put_flash(:info, "Translation paused") |> reload_project()}
+              project = socket.assigns.project
 
-            else
+        
 
-              _ -> {:noreply, put_flash(socket, :error, "Pause failed")}
+          
+
+        
+
+          
+
+        
+
+              with %Project{} <- project,
+
+        
+
+          
+
+        
+
+                   :ok <- Translation.pause_translation(project.id) do
+
+        
+
+          
+
+        
+
+                {:noreply, socket |> put_flash(:info, "Translation paused") |> reload_project()}
+
+        
+
+          
+
+        
+
+              else
+
+        
+
+          
+
+        
+
+                _ -> {:noreply, put_flash(socket, :error, "Pause failed")}
+
+        
+
+          
+
+        
+
+              end
+
+        
+
+          
+
+        
 
             end
 
-          end
+        
+
+          
 
         
 
-          defp reload_project(%{assigns: %{project: %Project{id: id}}} = socket) do
+            def handle_event("heal_project", _params, socket) do
+
+        
+
+              project = socket.assigns.project
+
+        
+
+              
+
+        
+
+              with %Project{} <- project,
+
+        
+
+                   {:ok, _job} <- DocCoffeeLite.Translation.Workers.ProjectHealingWorker.new(%{"project_id" => project.id}) |> Oban.insert() do
+
+        
+
+                {:noreply, put_flash(socket, :info, "Healing started in background")}
+
+        
+
+              else
+
+        
+
+                _ -> {:noreply, put_flash(socket, :error, "Failed to start healing")}
+
+        
+
+              end
+
+        
+
+            end
+
+        
+
+          
+
+        
+
+            defp reload_project(%{assigns: %{project: %Project{id: id}}} = socket) do
 
             case load_project(id) do
 
@@ -274,14 +372,15 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
                   <div class="flex flex-wrap items-center gap-3">
 
-                    <button :if={@project && can_start?(@project, latest_run(@project))} phx-click="start" class="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white uppercase shadow-sm">Start</button>
-
-                    <button :if={@project && can_pause?(latest_run(@project))} phx-click="pause" class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm">Pause</button>
-
+                                <button :if={@project && can_start?(@project, latest_run(@project))} phx-click="start" class="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white uppercase shadow-sm">Start</button>
                     
-
-                    <.link
-
+                                <button :if={@project && can_pause?(latest_run(@project))} phx-click="pause" class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm">Pause</button>
+                                
+                                <button :if={@project && latest_run(@project)} phx-click="heal_project" class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm text-stone-600 hover:bg-stone-50" title="Auto-heal structure & whitespace">Heal</button>
+                    
+                                
+                    
+                                <.link
                       :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
 
                       id="project-download"
