@@ -231,10 +231,9 @@ defmodule DocCoffeeLite.Translation do
   defp apply_review_search_filter(query, search) do
     if search && search != "" do
       pattern = "%#{search}%"
-      from [u, g] in query,
-        left_join: bt in BlockTranslation, on: bt.translation_unit_id == u.id,
-        where: ilike(u.source_text, ^pattern) or ilike(bt.translated_text, ^pattern),
-        distinct: true
+      from u in query,
+        where: ilike(u.source_text, ^pattern) or 
+               fragment("EXISTS (SELECT 1 FROM block_translations bt WHERE bt.translation_unit_id = ? AND bt.translated_text ILIKE ?)", u.id, ^pattern)
     else
       query
     end
