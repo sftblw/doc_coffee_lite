@@ -23,12 +23,21 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   @impl true
   def handle_params(params, _url, socket) do
     query = params["q"] || ""
+    page = String.to_integer(params["page"] || "1")
+    limit = socket.assigns.limit
     
+    total_count = Translation.count_units_for_review(socket.assigns.project.id, query)
+    total_pages = max(1, ceil(total_count / limit))
+    # Clip page to valid range
+    page = page |> max(1) |> min(total_pages)
+
     {:noreply,
      socket
      |> assign(:search, query)
-     |> assign(:offset, 0)
-     |> assign(:has_more, true)
+     |> assign(:page, page)
+     |> assign(:total_count, total_count)
+     |> assign(:total_pages, total_pages)
+     |> assign(:offset, (page - 1) * limit)
      |> stream(:units, [], reset: true)
      |> load_units()}
   end
@@ -51,10 +60,13 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
 
   @impl true
   def handle_event("search", %{"query" => query}, socket) do
-    path = if query == "", 
-      do: ~p"/projects/#{socket.assigns.project.id}/translations",
-      else: ~p"/projects/#{socket.assigns.project.id}/translations?q=#{query}"
-      
+    path = build_path(socket.assigns.project.id, query, 1)
+    {:noreply, push_patch(socket, to: path)}
+  end
+
+  @impl true
+  def handle_event("goto_page", %{"page" => page}, socket) do
+    path = build_path(socket.assigns.project.id, socket.assigns.search, page)
     {:noreply, push_patch(socket, to: path)}
   end
 
@@ -66,9 +78,8 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
          socket 
          |> put_flash(:info, "Re-translation process enqueued successfully.")
          |> assign(:dirty_count, 0)
-         |> assign(:offset, 0)
-         |> stream(:units, [], reset: true)
-         |> load_units()}
+         # Reset view to first page to see progress
+         |> push_patch(to: ~p"/projects/#{socket.assigns.project.id}/translations")}
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to start: #{inspect(reason)}")}
     end
@@ -86,7 +97,6 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
      socket
      |> put_flash(:info, "Filtered units marked as dirty.")
      |> assign(:dirty_count, dirty_count)
-     |> assign(:offset, 0)
      |> stream(:units, [], reset: true)
      |> load_units()}
   end
@@ -102,7 +112,6 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
       {:noreply,
        socket
        |> put_flash(:info, "Bulk replacement complete.")
-       |> assign(:offset, 0)
        |> stream(:units, [], reset: true)
        |> load_units()}
     else
@@ -110,26 +119,16 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
     end
   end
 
-  @impl true
-  def handle_event("search", params, socket) do
-    query = case params do
-      %{"query" => q} -> q
-      q when is_binary(q) -> q
-      _ -> ""
+  defp build_path(project_id, search, page) do
+    params = %{}
+    params = if search != "", do: Map.put(params, "q", search), else: params
+    params = if page != "1" && page != 1, do: Map.put(params, "page", page), else: params
+    
+    if map_size(params) == 0 do
+      ~p"/projects/#{project_id}/translations"
+    else
+      ~p"/projects/#{project_id}/translations?#{params}"
     end
-
-    {:noreply,
-     socket
-     |> assign(:search, query)
-     |> assign(:offset, 0)
-     |> assign(:has_more, true)
-     |> stream(:units, [], reset: true)
-     |> load_units()}
-  end
-
-  @impl true
-  def handle_event("load_more", _, socket) do
-    {:noreply, load_units(socket)}
   end
 
   defp load_units(socket) do
@@ -141,8 +140,6 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
 
     socket
     |> stream(:units, units)
-    |> assign(:offset, socket.assigns.offset + length(units))
-    |> assign(:has_more, length(units) == socket.assigns.limit)
   end
 
   @impl true
@@ -159,7 +156,11 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
               </.link>
               <div>
                 <h1 class="text-lg font-display text-stone-900 truncate max-w-xs md:max-w-md">{@project.title}</h1>
-                <p class="text-[10px] uppercase tracking-widest text-stone-500 font-bold">Review & Bulk Edit</p>
+                <div class="flex items-center gap-2">
+                  <p class="text-[10px] uppercase tracking-widest text-stone-500 font-bold">Review & Bulk Edit</p>
+                  <span class="text-[10px] text-stone-300">•</span>
+                  <span class="text-[10px] font-bold text-indigo-600 uppercase">Page {@page} of {@total_pages}</span>
+                </div>
               </div>
             </div>
 
@@ -279,16 +280,74 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
             <% end %>
           </div>
 
-          <%= if @has_more do %>
-            <div class="p-8 text-center border-t border-stone-100">
-              <button phx-click="load_more" class="rounded-full border border-stone-200 bg-white px-8 py-3 text-xs font-bold uppercase tracking-widest text-stone-600 hover:bg-stone-50 transition-colors">
-                Load More Units
+          <!-- Pagination Controls -->
+          <div class="sticky bottom-0 border-t border-stone-200 bg-white/90 p-4 backdrop-blur-sm">
+            <div class="mx-auto flex max-w-xl items-center justify-between">
+              <button 
+                phx-click="goto_page" 
+                phx-value-page={@page - 1}
+                disabled={@page <= 1}
+                class="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-600 hover:bg-stone-50 disabled:opacity-20 transition-all"
+              >
+                <.icon name="hero-chevron-left" class="size-4" />
+                Prev
               </button>
+
+              <div class="flex items-center gap-2">
+                <%= for p <- pagination_range(@page, @total_pages) do %>
+                  <%= if p == :ellipsis do %>
+                    <span class="px-1 text-stone-300">...</span>
+                  <% else %>
+                    <button 
+                      phx-click="goto_page" 
+                      phx-value-page={p}
+                      class={[
+                        "flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold transition-all",
+                        p == @page && "bg-stone-900 text-white shadow-md",
+                        p != @page && "text-stone-500 hover:bg-stone-100"
+                      ]}
+                    >
+                      {p}
+                    </button>
+                  <% end %>
+                <% end %>
+              </div>
+
+              <button 
+                phx-click="goto_page" 
+                phx-value-page={@page + 1}
+                disabled={@page >= @total_pages}
+                class="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-600 hover:bg-stone-50 disabled:opacity-20 transition-all"
+              >
+                Next
+                <.icon name="hero-chevron-right" class="size-4" />
+              </button>
+            </div>
+            <div class="mt-2 text-center text-[9px] font-bold uppercase tracking-widest text-stone-300">
+              Total {@total_count} units found
+            </div>
+          </div>
+
+          <%= if @total_count == 0 and @search != "" do %>
+            <div class="py-20 text-center">
+              <div class="inline-flex h-16 w-16 items-center justify-center rounded-full bg-stone-50 text-stone-300">
+                <.icon name="hero-magnifying-glass" class="size-8" />
+              </div>
+              <p class="mt-4 text-stone-500 text-sm">No units match your search.</p>
             </div>
           <% end %>
         </div>
       </main>
     </div>
     """
+  end
+
+  defp pagination_range(current, total) do
+    cond do
+      total <= 7 -> Enum.to_list(1..total)
+      current <= 4 -> Enum.to_list(1..5) ++ [:ellipsis, total]
+      current >= total - 3 -> [1, :ellipsis] ++ Enum.to_list((total - 4)..total)
+      true -> [1, :ellipsis, current - 1, current, current + 1, :ellipsis, total]
+    end
   end
 end

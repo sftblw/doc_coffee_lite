@@ -262,6 +262,16 @@ defmodule DocCoffeeLite.Translation do
     Repo.all(query)
   end
 
+  def count_units_for_review(project_id, search) do
+    query = from u in TranslationUnit,
+      join: g in assoc(u, :translation_group),
+      where: g.project_id == ^project_id
+
+    query 
+    |> apply_review_search_filter(search)
+    |> Repo.aggregate(:count, :id)
+  end
+
   defp apply_review_search_filter(query, search) do
     if search && search != "" do
       pattern = "%#{search}%"
