@@ -43,7 +43,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   def sanitize(text) do
     # Matches any tag [[...]] and replaces 2+ occurrences with 1
     # Use lazy match to avoid eating everything between [[ and ]]
-    Regex.replace(~r/(\[\[.*?\].*?)\\1+/, text, "\\1")
+    Regex.replace(~r/(\[\[.*?\]\])\1+/, text, "\\1")
   end
 
   # --- Parsing Source ---
@@ -200,21 +200,17 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     end
   end
 
-    defp ends_with_broken_tag?(text) do
+  defp ends_with_broken_tag?(text) do
+    Regex.match?(~r/\[\[.*
+?$/, text)
+  end
 
-      Regex.match?(~r/\[\[.*$/, text)
-
-    end
-
-  
-
-    defp cleanup_trailing_broken_tags(text) do
-
-      # Removes trailing [[... that didn't close
-
-      Regex.replace(~r/\[\[.*$/, text, "")
-
-    end
+  defp cleanup_trailing_broken_tags(text) do
+    # Aggressively remove any tag-like structure at the end (including complete tags)
+    # This prevents duplication if find_tag failed but the tag exists.
+    Regex.replace(~r/\[\[.*
+?$/, text, "")
+  end
 
   defp process_tag_node(%Node{type: :self_closing, full_tag_open: full_tag}, _match_str, remaining_trans) do
     {full_tag, remaining_trans, :ok}
