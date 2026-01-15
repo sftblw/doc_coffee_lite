@@ -62,7 +62,13 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   end
 
   @impl true
-  def handle_event("search", %{"query" => query}, socket) do
+  def handle_event("search", params, socket) do
+    query = case params do
+      %{"query" => q} -> q
+      q when is_binary(q) -> q
+      _ -> ""
+    end
+
     {:noreply,
      socket
      |> assign(:search, query)
@@ -95,11 +101,11 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
     ~H"""
     <div class="flex flex-col min-h-screen bg-[#f7f1e9]">
       <!-- Sticky Header -->
-      <header class="sticky top-0 z-20 border-b border-stone-200 bg-white/80 backdrop-blur-md">
+      <header class="sticky top-0 z-20 border-b border-stone-300 bg-white shadow-sm">
         <div class="mx-auto max-w-[1400px] px-4 py-4 sm:px-6 lg:px-8">
           <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="flex items-center gap-4">
-              <.link navigate={~p"/projects/#{@project.id}"} class="rounded-full p-2 hover:bg-stone-100 transition-colors">
+              <.link navigate={~p"/projects/#{@project.id}"} class="rounded-full p-2 hover:bg-stone-100 transition-colors text-stone-600">
                 <.icon name="hero-arrow-left" class="size-5" />
               </.link>
               <div>
@@ -109,24 +115,25 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
             </div>
 
             <!-- Search Bar -->
-            <div class="flex items-center gap-2 flex-1 max-w-lg">
-              <form phx-change="search" phx-submit="search" class="relative flex-1">
-                <.icon name="hero-magnifying-glass" class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-stone-400" />
+            <div class="flex items-center gap-3 flex-1 max-w-lg">
+              <form phx-submit="search" phx-change="search" class="relative flex-1">
+                <.icon name="hero-magnifying-glass" class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-stone-500" />
                 <input 
                   type="text" 
                   name="query" 
                   value={@search} 
                   placeholder="Search source or translation..." 
-                  class="w-full rounded-full border-stone-200 pl-10 text-sm focus:border-indigo-500 focus:ring-indigo-500 bg-stone-50/50"
+                  class="w-full rounded-full border-stone-300 pl-10 text-sm text-stone-900 focus:border-indigo-500 focus:ring-indigo-500 bg-stone-50 placeholder:text-stone-400"
                   phx-debounce="300"
+                  autocomplete="off"
                 />
               </form>
               <button 
                 phx-click="toggle_bulk" 
                 class={[
-                  "flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold uppercase transition-all",
+                  "flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold uppercase transition-all shadow-sm",
                   @show_bulk && "bg-stone-900 text-white border-stone-900",
-                  !@show_bulk && "bg-white text-stone-600 border-stone-200 hover:bg-stone-50"
+                  !@show_bulk && "bg-white text-stone-700 border-stone-300 hover:bg-stone-50"
                 ]}
               >
                 <.icon name="hero-adjustments-horizontal" class="size-4" />
@@ -137,19 +144,19 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
         </div>
 
         <!-- Bulk Actions Panel -->
-        <div :if={@show_bulk} class="border-t border-stone-200 bg-stone-50 shadow-inner">
-          <div class="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
-            <div class="grid gap-8 md:grid-cols-2">
+        <div :if={@show_bulk} class="border-t border-stone-200 bg-stone-100 shadow-inner">
+          <div class="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
+            <div class="grid gap-12 md:grid-cols-2">
               <!-- Action 1: Dirty Marking -->
-              <div class="space-y-3">
-                <h3 class="text-[10px] font-bold uppercase tracking-widest text-stone-400">Batch Mark Dirty</h3>
-                <p class="text-xs text-stone-500">
-                  Mark all units matching <span class="font-bold text-stone-900">"{@search}"</span> as needing re-translation.
+              <div class="space-y-4">
+                <h3 class="text-xs font-bold uppercase tracking-widest text-stone-600">Batch Mark Dirty</h3>
+                <p class="text-xs text-stone-500 leading-relaxed">
+                  Mark all units matching <span class="font-black text-stone-900 underline">"{@search}"</span> as needing re-translation.
                 </p>
                 <button 
                   phx-click="mark_filtered_dirty" 
                   data-confirm={"Are you sure you want to mark all filtered items (#{@search}) as dirty?"}
-                  class="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white uppercase hover:bg-rose-700"
+                  class="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-rose-700 shadow-sm transition-colors"
                 >
                   <.icon name="hero-flag" class="size-4" />
                   Mark Filtered as Dirty
@@ -157,21 +164,21 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
               </div>
 
               <!-- Action 2: Find & Replace -->
-              <div class="space-y-3">
-                <h3 class="text-[10px] font-bold uppercase tracking-widest text-stone-400">Find & Replace in Translations</h3>
-                <p class="text-xs text-stone-500">
-                  Replace text in translations for units matching <span class="font-bold text-stone-900">"{@search}"</span>.
+              <div class="space-y-4">
+                <h3 class="text-xs font-bold uppercase tracking-widest text-stone-600">Find & Replace in Translations</h3>
+                <p class="text-xs text-stone-500 leading-relaxed">
+                  Replace text in translations for units matching <span class="font-black text-stone-900 underline">"{@search}"</span>.
                 </p>
-                <.form for={@bulk_form} phx-submit="bulk_replace" class="flex flex-wrap items-end gap-3">
-                  <div class="space-y-1">
-                    <label class="text-[9px] font-bold uppercase text-stone-400">Find</label>
-                    <input name="find" type="text" class="block rounded-lg border-stone-200 text-xs focus:border-indigo-500 focus:ring-indigo-500" required />
+                <.form for={@bulk_form} phx-submit="bulk_replace" class="flex flex-wrap items-end gap-4">
+                  <div class="space-y-1.5">
+                    <label class="text-[10px] font-bold uppercase text-stone-500">Find text</label>
+                    <input name="find" type="text" placeholder="Word to find" class="block w-48 rounded-lg border-stone-300 text-sm text-stone-900 bg-white focus:border-indigo-500 focus:ring-indigo-500 shadow-sm" required />
                   </div>
-                  <div class="space-y-1">
-                    <label class="text-[9px] font-bold uppercase text-stone-400">Replace with</label>
-                    <input name="replace" type="text" class="block rounded-lg border-stone-200 text-xs focus:border-indigo-500 focus:ring-indigo-500" />
+                  <div class="space-y-1.5">
+                    <label class="text-[10px] font-bold uppercase text-stone-500">Replace with</label>
+                    <input name="replace" type="text" placeholder="Replacement" class="block w-48 rounded-lg border-stone-300 text-sm text-stone-900 bg-white focus:border-indigo-500 focus:ring-indigo-500 shadow-sm" />
                   </div>
-                  <button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-xs font-bold text-white uppercase hover:bg-stone-800">
+                  <button type="submit" class="rounded-lg bg-stone-900 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-stone-800 shadow-md transition-colors">
                     Replace All
                   </button>
                 </.form>
