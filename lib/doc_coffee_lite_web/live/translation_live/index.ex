@@ -16,8 +16,49 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
      |> assign(:limit, 100)
      |> assign(:search, "")
      |> assign(:has_more, true)
+     |> assign(:show_bulk, false)
+     |> assign(:bulk_form, to_form(%{"find" => "", "replace" => ""}))
      |> stream(:units, [])
      |> load_units()}
+  end
+
+  @impl true
+  def handle_event("toggle_bulk", _, socket) do
+    {:noreply, assign(socket, :show_bulk, !socket.assigns.show_bulk)}
+  end
+
+  @impl true
+  def handle_event("mark_filtered_dirty", _, socket) do
+    search = socket.assigns.search
+    project_id = socket.assigns.project.id
+    
+    Translation.mark_all_filtered_dirty(project_id, search)
+    
+    {:noreply,
+     socket
+     |> put_flash(:info, "Filtered units marked as dirty.")
+     |> assign(:offset, 0)
+     |> stream(:units, [], reset: true)
+     |> load_units()}
+  end
+
+  @impl true
+  def handle_event("bulk_replace", %{"find" => find, "replace" => replace}, socket) do
+    search = socket.assigns.search
+    project_id = socket.assigns.project.id
+    
+    if find != "" do
+      Translation.bulk_replace_translations(project_id, search, find, replace)
+      
+      {:noreply,
+       socket
+       |> put_flash(:info, "Bulk replacement complete.")
+       |> assign(:offset, 0)
+       |> stream(:units, [], reset: true)
+       |> load_units()}
+    else
+      {:noreply, socket |> put_flash(:error, "Search string for replacement cannot be empty.")}
+    end
   end
 
   @impl true
@@ -68,8 +109,8 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
             </div>
 
             <!-- Search Bar -->
-            <div class="flex-1 max-w-md">
-              <form phx-change="search" phx-submit="search" class="relative">
+            <div class="flex items-center gap-2 flex-1 max-w-lg">
+              <form phx-change="search" phx-submit="search" class="relative flex-1">
                 <.icon name="hero-magnifying-glass" class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-stone-400" />
                 <input 
                   type="text" 
@@ -80,6 +121,61 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
                   phx-debounce="300"
                 />
               </form>
+              <button 
+                phx-click="toggle_bulk" 
+                class={[
+                  "flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold uppercase transition-all",
+                  @show_bulk && "bg-stone-900 text-white border-stone-900",
+                  !@show_bulk && "bg-white text-stone-600 border-stone-200 hover:bg-stone-50"
+                ]}
+              >
+                <.icon name="hero-adjustments-horizontal" class="size-4" />
+                Bulk
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bulk Actions Panel -->
+        <div :if={@show_bulk} class="border-t border-stone-200 bg-stone-50 shadow-inner">
+          <div class="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
+            <div class="grid gap-8 md:grid-cols-2">
+              <!-- Action 1: Dirty Marking -->
+              <div class="space-y-3">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-stone-400">Batch Mark Dirty</h3>
+                <p class="text-xs text-stone-500">
+                  Mark all units matching <span class="font-bold text-stone-900">"{@search}"</span> as needing re-translation.
+                </p>
+                <button 
+                  phx-click="mark_filtered_dirty" 
+                  data-confirm={"Are you sure you want to mark all filtered items (#{@search}) as dirty?"}
+                  class="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white uppercase hover:bg-rose-700"
+                >
+                  <.icon name="hero-flag" class="size-4" />
+                  Mark Filtered as Dirty
+                </button>
+              </div>
+
+              <!-- Action 2: Find & Replace -->
+              <div class="space-y-3">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-stone-400">Find & Replace in Translations</h3>
+                <p class="text-xs text-stone-500">
+                  Replace text in translations for units matching <span class="font-bold text-stone-900">"{@search}"</span>.
+                </p>
+                <.form for={@bulk_form} phx-submit="bulk_replace" class="flex flex-wrap items-end gap-3">
+                  <div class="space-y-1">
+                    <label class="text-[9px] font-bold uppercase text-stone-400">Find</label>
+                    <input name="find" type="text" class="block rounded-lg border-stone-200 text-xs focus:border-indigo-500 focus:ring-indigo-500" required />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-[9px] font-bold uppercase text-stone-400">Replace with</label>
+                    <input name="replace" type="text" class="block rounded-lg border-stone-200 text-xs focus:border-indigo-500 focus:ring-indigo-500" />
+                  </div>
+                  <button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-xs font-bold text-white uppercase hover:bg-stone-800">
+                    Replace All
+                  </button>
+                </.form>
+              </div>
             </div>
           </div>
         </div>

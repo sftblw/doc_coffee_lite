@@ -225,18 +225,67 @@ defmodule DocCoffeeLite.Translation do
       limit: ^limit,
       preload: [:translation_group, block_translations: ^latest_bt_query]
 
-    query = 
-      if search && search != "" do
-        pattern = "%#{search}%"
-        from [u, g] in query,
-          left_join: bt in BlockTranslation, on: bt.translation_unit_id == u.id,
-          where: ilike(u.source_text, ^pattern) or ilike(bt.translated_text, ^pattern),
-          distinct: true
-      else
-        query
-      end
+    query |> apply_review_search_filter(search) |> Repo.all()
+  end
 
-    Repo.all(query)
+  defp apply_review_search_filter(query, search) do
+    if search && search != "" do
+      pattern = "%#{search}%"
+      from [u, g] in query,
+        left_join: bt in BlockTranslation, on: bt.translation_unit_id == u.id,
+        where: ilike(u.source_text, ^pattern) or ilike(bt.translated_text, ^pattern),
+        distinct: true
+    else
+      query
+    end
+  end
+
+  def mark_all_filtered_dirty(project_id, search) do
+    query = from u in TranslationUnit,
+      join: g in assoc(u, :translation_group),
+      where: g.project_id == ^project_id
+
+    query = 
+      query 
+      |> apply_review_search_filter(search)
+      # We need to subquery or use IDs because update_all doesn't support joins/distinct well in all cases
+      |> select([u], u.id)
+
+    ids = Repo.all(query)
+
+    from(u in TranslationUnit, where: u.id in ^ids)
+    |> Repo.update_all(set: [is_dirty: true, updated_at: DateTime.utc_now()])
+  end
+
+  def bulk_replace_translations(project_id, search, find_str, replace_str) do
+    if find_str == "", do: :ok, else: do_bulk_replace(project_id, search, find_str, replace_str)
+  end
+
+  defp do_bulk_replace(project_id, search, find_str, replace_str) do
+    # Get all latest block translations for filtered units
+    latest_bt_query = from b in BlockTranslation,
+      distinct: b.translation_unit_id,
+      order_by: [asc: b.translation_unit_id, desc: b.inserted_at]
+
+    query = from u in TranslationUnit,
+      join: g in assoc(u, :translation_group),
+      where: g.project_id == ^project_id,
+      preload: [block_translations: ^latest_bt_query]
+
+    units = query |> apply_review_search_filter(search) |> Repo.all()
+
+    Repo.transaction(fn ->
+      Enum.each(units, fn unit ->
+        case get_latest_translation(unit) do
+          nil -> :ok
+          bt ->
+            new_text = String.replace(bt.translated_text, find_str, replace_str)
+            if new_text != bt.translated_text do
+              update_block_translation(bt, %{translated_text: new_text})
+            end
+        end
+      end)
+    end)
   end
 
   def get_latest_translation(unit) do
