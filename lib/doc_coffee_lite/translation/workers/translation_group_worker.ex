@@ -17,8 +17,8 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   alias DocCoffeeLite.Translation.TranslationRun
   alias DocCoffeeLite.Translation.BlockTranslation
   alias DocCoffeeLite.Translation.LlmClient
+  alias DocCoffeeLite.Translation.AutoHealer
 
-  @default_batch_size 10
   @pending_statuses ["pending", "queued", "translating"]
   @pause_snooze_seconds 10
 
@@ -56,9 +56,6 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
               {:ok, _, group, _} = load_state(run_id, group_id)
               finalize_group(group)
             end
-
-          {:pause, _group} ->
-            {:snooze, @pause_snooze_seconds}
 
           {:error, reason} ->
             {:error, reason}
@@ -167,7 +164,17 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       where: u.translation_group_id == ^group_id and u.status in ^@pending_statuses)
   end
 
-  defp save_translation_result(run, unit, {text, markup, resp}, strategy) do
+  defp save_translation_result(run, unit, {text, _markup_ignored, resp}, strategy) do
+    # 1. Auto-Heal the text (fix brackets, restore whitespace structure)
+    {healed_text, healing_status} =
+      case AutoHealer.heal(unit.source_text, text) do
+        {:ok, healed} -> {healed, "ok"}
+        {:error, _reason, fallback} -> {fallback, "healing_failed"}
+      end
+
+    # 2. Restore placeholders using the HEALED text
+    translated_markup = DocCoffeeLite.Translation.Placeholder.restore(healed_text, unit.placeholders || %{})
+
     sanitized_resp = 
       case resp do
         %{"raw" => raw} when is_binary(raw) -> %{"raw_summary" => String.slice(raw, 0, 1000)}
@@ -179,12 +186,12 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       translation_run_id: run.id,
       translation_unit_id: unit.id,
       status: "translated",
-      translated_text: text,
-      translated_markup: markup,
+      translated_text: healed_text,
+      translated_markup: translated_markup,
       placeholders: unit.placeholders || %{},
       llm_response: sanitized_resp,
       metrics: %{},
-      metadata: %{"strategy" => strategy, "source_hash" => unit.source_hash}
+      metadata: %{"strategy" => strategy, "source_hash" => unit.source_hash, "healing_status" => healing_status}
     }
 
     try do
@@ -272,7 +279,5 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     {:ok, %{unit | status: status}}
   end
 
-  defp normalize_batch_size(nil), do: @default_batch_size
-  defp normalize_batch_size(val) when is_integer(val), do: val
-  defp normalize_batch_size(_), do: @default_batch_size
+
 end
