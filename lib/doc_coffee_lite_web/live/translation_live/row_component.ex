@@ -67,8 +67,8 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
         <!-- Meta & Context -->
         <div class="flex flex-col gap-2 w-24 shrink-0">
           <span class="text-[10px] font-bold uppercase tracking-wider text-stone-400">#{@unit.unit_key}</span>
-          <span class="text-[9px] text-stone-400 truncate" title={@unit.translation_group.name}>
-            {@unit.translation_group.name}
+          <span class="text-[9px] text-stone-400 truncate" title={@unit.translation_group.group_key}>
+            {Path.basename(@unit.translation_group.group_key)}
           </span>
           
           <button 
@@ -87,18 +87,18 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
 
         <!-- Texts -->
         <div class="grid flex-1 gap-6 lg:grid-cols-2">
-          <!-- Source -->
+          <!-- Source Column -->
           <div class="space-y-2">
-            <p class="text-[10px] font-bold uppercase tracking-widest text-stone-300">Source</p>
-            <div class="text-sm leading-relaxed text-stone-600 whitespace-pre-wrap">{@unit.source_text}</div>
+            <p class="text-[10px] font-bold uppercase tracking-widest text-stone-300">Original Source</p>
+            <div class="text-sm leading-relaxed text-stone-600 whitespace-pre-wrap select-all">{@unit.source_text}</div>
           </div>
 
-          <!-- Translation -->
+          <!-- Translation Column -->
           <div class="space-y-2">
             <div class="flex items-center justify-between">
               <p class="text-[10px] font-bold uppercase tracking-widest text-stone-300">Translation</p>
               <%= if !@editing do %>
-                <button phx-click="edit" phx-target={@myself} class="text-[10px] font-bold uppercase text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button phx-click="edit" phx-target={@myself} class="text-[10px] font-bold uppercase text-indigo-500 transition-opacity">
                   Edit
                 </button>
               <% end %>
@@ -109,6 +109,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
                 <textarea 
                   name="draft"
                   rows="4" 
+                  autofocus
                   class="w-full rounded-xl border-stone-200 text-sm leading-relaxed focus:border-indigo-500 focus:ring-indigo-500"
                   phx-window-keydown={JS.dispatch("submit", to: "form")} 
                   phx-key="Enter"
@@ -124,8 +125,12 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
                 </div>
               </form>
             <% else %>
-              <div class="text-sm leading-relaxed text-stone-900 whitespace-pre-wrap">
-                <%= if @translation, do: @translation.translated_text, else: "---" %>
+              <div 
+                phx-click="edit" 
+                phx-target={@myself}
+                class="min-h-[3rem] cursor-pointer rounded-lg border border-transparent p-1 -m-1 hover:bg-stone-50 hover:border-stone-100 text-sm leading-relaxed text-stone-900 whitespace-pre-wrap"
+              >
+                <%= if @translation && @translation.translated_text != "", do: @translation.translated_text, else: "---" %>
               </div>
             <% end %>
           </div>
