@@ -7,6 +7,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
     if connected?(socket), do: :ok
     
     project = Translation.get_project!(project_id)
+    dirty_count = Translation.count_dirty_units(project.id)
     
     {:ok,
      socket
@@ -17,6 +18,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
      |> assign(:search, "")
      |> assign(:has_more, true)
      |> assign(:show_bulk, false)
+     |> assign(:dirty_count, dirty_count)
      |> assign(:bulk_form, to_form(%{"find" => "", "replace" => ""}))
      |> stream(:units, [])
      |> load_units()}
@@ -28,15 +30,38 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   end
 
   @impl true
+  def handle_event("clear_search", _, socket) do
+    handle_event("search", %{"query" => ""}, socket)
+  end
+
+  @impl true
+  def handle_event("start_retranslation", _, socket) do
+    case Translation.start_translation(socket.assigns.project.id) do
+      :ok ->
+        {:noreply, 
+         socket 
+         |> put_flash(:info, "Re-translation process enqueued successfully.")
+         |> assign(:dirty_count, 0)
+         |> assign(:offset, 0)
+         |> stream(:units, [], reset: true)
+         |> load_units()}
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to start: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
   def handle_event("mark_filtered_dirty", _, socket) do
     search = socket.assigns.search
     project_id = socket.assigns.project.id
     
     Translation.mark_all_filtered_dirty(project_id, search)
+    dirty_count = Translation.count_dirty_units(project_id)
     
     {:noreply,
      socket
      |> put_flash(:info, "Filtered units marked as dirty.")
+     |> assign(:dirty_count, dirty_count)
      |> assign(:offset, 0)
      |> stream(:units, [], reset: true)
      |> load_units()}
@@ -110,7 +135,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
               </.link>
               <div>
                 <h1 class="text-lg font-display text-stone-900 truncate max-w-xs md:max-w-md">{@project.title}</h1>
-                <p class="text-[10px] uppercase tracking-widest text-stone-500 font-bold">Translation Review</p>
+                <p class="text-[10px] uppercase tracking-widest text-stone-500 font-bold">Review & Bulk Edit</p>
               </div>
             </div>
 
@@ -123,21 +148,32 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
                   name="query" 
                   value={@search} 
                   placeholder="Search source or translation..." 
-                  class="w-full rounded-full border-stone-300 pl-10 text-sm text-stone-900 focus:border-indigo-500 focus:ring-indigo-500 bg-stone-50 placeholder:text-stone-400"
-                  phx-debounce="300"
+                  class="w-full rounded-full border-stone-300 pl-10 pr-10 text-sm text-stone-900 focus:border-indigo-500 focus:ring-indigo-500 bg-stone-50 placeholder:text-stone-400 font-medium"
+                  phx-debounce="400"
                   autocomplete="off"
                 />
+                <button 
+                  :if={@search != ""}
+                  type="button" 
+                  phx-click="clear_search"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-600"
+                >
+                  <.icon name="hero-x-mark" class="size-4" />
+                </button>
               </form>
               <button 
                 phx-click="toggle_bulk" 
                 class={[
-                  "flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold uppercase transition-all shadow-sm",
+                  "flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold uppercase transition-all shadow-sm relative",
                   @show_bulk && "bg-stone-900 text-white border-stone-900",
                   !@show_bulk && "bg-white text-stone-700 border-stone-300 hover:bg-stone-50"
                 ]}
               >
                 <.icon name="hero-adjustments-horizontal" class="size-4" />
-                Bulk
+                Bulk Actions
+                <span :if={@dirty_count > 0} class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600 text-[8px] text-white">
+                  {@dirty_count}
+                </span>
               </button>
             </div>
           </div>
@@ -146,17 +182,18 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
         <!-- Bulk Actions Panel -->
         <div :if={@show_bulk} class="border-t border-stone-200 bg-stone-100 shadow-inner">
           <div class="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
-            <div class="grid gap-12 md:grid-cols-2">
+            <div class="grid gap-12 md:grid-cols-3">
               <!-- Action 1: Dirty Marking -->
               <div class="space-y-4">
-                <h3 class="text-xs font-bold uppercase tracking-widest text-stone-600">Batch Mark Dirty</h3>
+                <h3 class="text-xs font-bold uppercase tracking-widest text-stone-600">Batch Filtered Action</h3>
                 <p class="text-xs text-stone-500 leading-relaxed">
-                  Mark all units matching <span class="font-black text-stone-900 underline">"{@search}"</span> as needing re-translation.
+                  Mark all units matching <span class="font-black text-stone-900">"{@search}"</span> as needing re-translation.
                 </p>
                 <button 
                   phx-click="mark_filtered_dirty" 
-                  data-confirm={"Are you sure you want to mark all filtered items (#{@search}) as dirty?"}
-                  class="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-rose-700 shadow-sm transition-colors"
+                  disabled={@search == ""}
+                  data-confirm={"Are you sure you want to mark all filtered items matching '#{@search}' as dirty?"}
+                  class="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-stone-800 shadow-sm transition-colors disabled:opacity-30"
                 >
                   <.icon name="hero-flag" class="size-4" />
                   Mark Filtered as Dirty
@@ -165,23 +202,40 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
 
               <!-- Action 2: Find & Replace -->
               <div class="space-y-4">
-                <h3 class="text-xs font-bold uppercase tracking-widest text-stone-600">Find & Replace in Translations</h3>
+                <h3 class="text-xs font-bold uppercase tracking-widest text-stone-600">Global Find & Replace</h3>
                 <p class="text-xs text-stone-500 leading-relaxed">
-                  Replace text in translations for units matching <span class="font-black text-stone-900 underline">"{@search}"</span>.
+                  Replace text within results for <span class="font-bold text-stone-900">"{@search || "all units"}"</span>.
                 </p>
-                <.form for={@bulk_form} phx-submit="bulk_replace" class="flex flex-wrap items-end gap-4">
-                  <div class="space-y-1.5">
-                    <label class="text-[10px] font-bold uppercase text-stone-500">Find text</label>
-                    <input name="find" type="text" placeholder="Word to find" class="block w-48 rounded-lg border-stone-300 text-sm text-stone-900 bg-white focus:border-indigo-500 focus:ring-indigo-500 shadow-sm" required />
+                <.form for={@bulk_form} phx-submit="bulk_replace" class="space-y-3">
+                  <div class="flex gap-3">
+                    <input name="find" type="text" placeholder="Find..." class="block flex-1 rounded-lg border-stone-300 text-xs text-stone-900 bg-white focus:border-indigo-500 shadow-sm" required />
+                    <input name="replace" type="text" placeholder="Replace..." class="block flex-1 rounded-lg border-stone-300 text-xs text-stone-900 bg-white focus:border-indigo-500 shadow-sm" />
                   </div>
-                  <div class="space-y-1.5">
-                    <label class="text-[10px] font-bold uppercase text-stone-500">Replace with</label>
-                    <input name="replace" type="text" placeholder="Replacement" class="block w-48 rounded-lg border-stone-300 text-sm text-stone-900 bg-white focus:border-indigo-500 focus:ring-indigo-500 shadow-sm" />
-                  </div>
-                  <button type="submit" class="rounded-lg bg-stone-900 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-stone-800 shadow-md transition-colors">
-                    Replace All
+                  <button type="submit" class="w-full rounded-lg bg-stone-900 py-2.5 text-xs font-bold text-white uppercase hover:bg-stone-800 shadow-sm transition-colors">
+                    Replace in results
                   </button>
                 </.form>
+              </div>
+
+              <!-- Action 3: Re-translation Control -->
+              <div class="space-y-4 border-l border-stone-200 pl-8">
+                <h3 class="text-xs font-bold uppercase tracking-widest text-stone-600">Re-translation Queue</h3>
+                <div class="flex items-center justify-between rounded-xl bg-white p-4 shadow-sm ring-1 ring-stone-200">
+                  <div>
+                    <span class="text-2xl font-display text-rose-600">{@dirty_count}</span>
+                    <span class="ml-1 text-[10px] font-bold text-stone-400 uppercase">Units marked</span>
+                  </div>
+                  <button 
+                    phx-click="start_retranslation"
+                    disabled={@dirty_count == 0}
+                    class="rounded-lg bg-rose-600 px-4 py-2 text-[10px] font-bold text-white uppercase hover:bg-rose-700 shadow-md transition-all disabled:opacity-30 disabled:grayscale"
+                  >
+                    Start Now
+                  </button>
+                </div>
+                <p class="text-[10px] leading-relaxed text-stone-400 italic">
+                  * Starting will reset status of marked units to 'pending' and rewind chapter cursors.
+                </p>
               </div>
             </div>
           </div>

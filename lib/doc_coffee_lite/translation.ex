@@ -266,11 +266,17 @@ defmodule DocCoffeeLite.Translation do
     if search && search != "" do
       pattern = "%#{search}%"
       from u in query,
-        where: ilike(u.source_text, ^pattern) or 
+        where: ilike(coalesce(u.source_text, ""), ^pattern) or 
                fragment("EXISTS (SELECT 1 FROM block_translations bt WHERE bt.translation_unit_id = ? AND bt.translated_text ILIKE ?)", u.id, ^pattern)
     else
       query
     end
+  end
+
+  def count_dirty_units(project_id) do
+    Repo.aggregate(from(u in TranslationUnit, 
+      join: g in assoc(u, :translation_group), 
+      where: g.project_id == ^project_id and u.is_dirty == true), :count, :id)
   end
 
   def mark_all_filtered_dirty(project_id, search) do

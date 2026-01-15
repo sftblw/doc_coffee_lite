@@ -615,7 +615,7 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
   defp run_status(%TranslationRun{status: status}), do: status
   defp run_status(_), do: nil
 
-  defp can_start?(_project, %TranslationRun{status: s}) when s in ["draft", "paused", "failed"], do: true
+  defp can_start?(_project, %TranslationRun{status: s}) when s in ["draft", "paused", "failed", "ready"], do: true
   defp can_start?(%Project{status: "draft"}, nil), do: true
   defp can_start?(_, _), do: false
 
