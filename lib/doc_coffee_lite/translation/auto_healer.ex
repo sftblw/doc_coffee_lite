@@ -214,9 +214,13 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   end
 
   defp find_first_match(exp, tokens, n, start) do
-    Enum.reduce_while(start..(n - 1), nil, fn i, _acc ->
-      if match_token?(exp, elem(tokens, i)), do: {:halt, i}, else: {:cont, nil}
-    end)
+    if start >= n do
+      nil
+    else
+      Enum.reduce_while(start..(n - 1), nil, fn i, _acc ->
+        if match_token?(exp, elem(tokens, i)), do: {:halt, i}, else: {:cont, nil}
+      end)
+    end
   end
 
   defp find_candidates(exp, tokens, n, j) do
