@@ -17,92 +17,119 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
       socket
       |> assign(:project, nil)
       |> assign(:page_title, "Project")
+      |> assign(:editing_title, false)
 
-            case load_project(project_id) do
+    case load_project(project_id) do
+      {:ok, project, completed, total, recent} ->
+        socket =
+          socket
+          |> assign(:project, project)
+          |> assign(:completed_count, completed)
+          |> assign(:total_count, total)
+          |> assign(:recent_translations, recent)
+          |> assign(:eta, calculate_eta(project, completed, total))
+          |> assign(:page_title, project.title || "Project")
 
-              {:ok, project, completed, total, recent} ->
+        {:ok, socket}
 
-                socket =
+      {:error, _reason} ->
+        {:ok, socket |> put_flash(:error, "Project not found") |> push_navigate(to: ~p"/")}
+    end
+  end
 
-                  socket
+    @impl true
 
-                  |> assign(:project, project)
+    def handle_info({:progress_updated, progress, completed, total}, socket) do
 
-                  |> assign(:completed_count, completed)
+      if progress == 100 do
 
-                  |> assign(:total_count, total)
+        {:noreply, reload_project(socket)}
 
-                  |> assign(:recent_translations, recent)
+      else
 
-                  |> assign(:eta, calculate_eta(project, completed, total))
+        project = socket.assigns.project
 
-                  |> assign(:page_title, project.title || "Project")
-
-        
-
-                {:ok, socket}
-
-        
-
-              {:error, _reason} ->
-
-                {:ok, socket |> put_flash(:error, "Project not found") |> push_navigate(to: ~p"/")}
-
-            end
-
-          end
-
-        
-
-          @impl true
-
-          def handle_info({:progress_updated, progress, completed, total}, socket) do
-
-            if progress == 100 do
-
-              {:noreply, reload_project(socket)}
-
-            else
-
-              project = socket.assigns.project
-
-              updated_project = %{project | progress: progress}
-
-              
-
-              # For real-time feel, we could fetch recent translations here too, 
-
-              # but let's keep it efficient by doing it on reload or separate pubsub if needed.
-
-              # For now, let's refresh them on each progress update.
-
-              {:ok, _, _, _, recent} = load_project(project.id)
+        updated_project = %{project | progress: progress}
 
         
 
-              {:noreply, 
+        # For real-time feel, we could fetch recent translations here too, 
 
-               socket 
+        # but let's keep it efficient by doing it on reload or separate pubsub if needed.
 
-               |> assign(:project, updated_project)
+        # For now, let's refresh them on each progress update.
 
-               |> assign(:completed_count, completed)
+        {:ok, _, _, _, recent} = load_project(project.id)
 
-               |> assign(:total_count, total)
+  
 
-               |> assign(:recent_translations, recent)
+        {:noreply, 
 
-               |> assign(:eta, calculate_eta(updated_project, completed, total))}
+         socket 
 
-            end
+         |> assign(:project, updated_project)
 
-          end
+         |> assign(:completed_count, completed)
 
-        
+         |> assign(:total_count, total)
 
-          @impl true
+         |> assign(:recent_translations, recent)
 
-          def handle_event("refresh", _params, socket) do
+         |> assign(:eta, calculate_eta(updated_project, completed, total))}
+
+      end
+
+    end
+
+  
+
+    @impl true
+
+    def handle_event("edit_title", _, socket) do
+
+      {:noreply, assign(socket, :editing_title, true)}
+
+    end
+
+  
+
+    def handle_event("cancel_edit_title", _, socket) do
+
+      {:noreply, assign(socket, :editing_title, false)}
+
+    end
+
+  
+
+    def handle_event("save_title", %{"title" => title}, socket) do
+
+      project = socket.assigns.project
+
+      case Translation.update_project(project, %{title: title}) do
+
+        {:ok, updated_project} ->
+
+          {:noreply, 
+
+           socket 
+
+           |> assign(:project, updated_project)
+
+           |> assign(:editing_title, false)
+
+           |> put_flash(:info, "Project title updated.")}
+
+        {:error, _changeset} ->
+
+          {:noreply, put_flash(socket, :error, "Failed to update title.")}
+
+      end
+
+    end
+
+  
+
+    def handle_event("refresh", _params, socket) do
 
             {:noreply, reload_project(socket)}
 
@@ -338,15 +365,38 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
                 <header id="project-header" class="flex flex-wrap items-start justify-between gap-6">
 
-                  <div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-stone-400">Project</span>
+                      <span :if={@project} class="rounded bg-stone-200/50 px-1.5 py-0.5 text-[9px] font-black text-stone-500">ID: #{@project.id}</span>
+                    </div>
 
-                    <p class="text-xs font-semibold uppercase tracking-[0.3em] text-stone-400">Project</p>
-
-                    <h1 class="font-display mt-2 text-3xl text-stone-900 sm:text-4xl">
-
-                      {project_title(@project)}
-
-                    </h1>
+                    <%= if @editing_title do %>
+                      <form phx-submit="save_title" class="flex items-center gap-2">
+                        <input 
+                          type="text" 
+                          name="title" 
+                          value={project_title(@project)} 
+                          autofocus
+                          class="block w-full max-w-lg rounded-xl border-stone-300 bg-white/50 text-2xl font-display focus:border-indigo-500 focus:ring-indigo-500 py-1" 
+                        />
+                        <button type="submit" class="rounded-full bg-stone-900 p-2 text-white hover:bg-stone-800">
+                          <.icon name="hero-check" class="size-4" />
+                        </button>
+                        <button type="button" phx-click="cancel_edit_title" class="rounded-full bg-white p-2 text-stone-400 hover:text-stone-600 ring-1 ring-stone-200">
+                          <.icon name="hero-x-mark" class="size-4" />
+                        </button>
+                      </form>
+                    <% else %>
+                      <div class="group flex items-center gap-3">
+                        <h1 class="font-display text-3xl text-stone-900 sm:text-4xl truncate">
+                          {project_title(@project)}
+                        </h1>
+                        <button phx-click="edit_title" class="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-stone-400 hover:text-indigo-500">
+                          <.icon name="hero-pencil-square" class="size-5" />
+                        </button>
+                      </div>
+                    <% end %>
 
                     <p class="mt-2 text-sm text-stone-600">
 
