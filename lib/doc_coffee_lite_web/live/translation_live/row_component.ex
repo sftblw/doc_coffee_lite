@@ -124,7 +124,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.RowComponent do
                     name="draft"
                     rows="5" 
                     autofocus
-                    class="w-full rounded-xl border-stone-200 text-sm leading-relaxed focus:border-indigo-500 focus:ring-indigo-500 shadow-inner bg-stone-50"
+                    class="w-full rounded-xl border-stone-300 text-sm leading-relaxed text-stone-900 focus:border-indigo-500 focus:ring-indigo-500 shadow-sm bg-white"
                     phx-window-keydown={JS.dispatch("submit", to: "#form-#{@unit.id}")} 
                     phx-key="Enter"
                     phx-metadata='{"ctrlKey":true}'
