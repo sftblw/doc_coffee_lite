@@ -28,6 +28,7 @@ defmodule DocCoffeeLiteWeb.Router do
     live "/projects/:project_id/runs/:run_id/groups/:group_id/blocks", BlockEditLive
     live "/settings/llm", UserLlmLive
     get "/projects/:project_id/runs/:run_id/download", DownloadController, :run
+    get "/projects/:project_id/export", ExportController, :export
   end
 
   # Other scopes may use custom stacks.

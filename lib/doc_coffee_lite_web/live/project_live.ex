@@ -18,6 +18,7 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
       |> assign(:project, nil)
       |> assign(:page_title, "Project")
       |> assign(:editing_title, false)
+      |> allow_upload(:import_file, accept: ~w(.zip), max_entries: 1)
 
     case load_project(project_id) do
       {:ok, project, completed, total, recent} ->
@@ -143,6 +144,20 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
     end
   end
 
+  def handle_event("delete_project", _params, socket) do
+    project = socket.assigns.project
+
+    with %Project{} <- project,
+         {:ok, _project} <- Translation.delete_project(project) do
+      {:noreply,
+       socket
+       |> put_flash(:info, "Project deleted.")
+       |> push_navigate(to: ~p"/")}
+    else
+      _ -> {:noreply, put_flash(socket, :error, "Delete failed")}
+    end
+  end
+
   def handle_event("pause", _params, socket) do
     project = socket.assigns.project
 
@@ -166,6 +181,33 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
       {:noreply, put_flash(socket, :info, "Healing started in background")}
     else
       _ -> {:noreply, put_flash(socket, :error, "Failed to start healing")}
+    end
+  end
+
+  def handle_event("validate_import", _params, socket) do
+    {:noreply, socket}
+  end
+
+  def handle_event("import_update", _params, socket) do
+    project = socket.assigns.project
+
+    uploaded_files =
+      consume_uploaded_entries(socket, :import_file, fn %{path: path}, _entry ->
+        DocCoffeeLite.Translation.ImportExport.import_to_existing(project.id, path)
+      end)
+
+    case uploaded_files do
+      [{:ok, count}] ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Imported #{count} translations successfully.")
+         |> reload_project()}
+
+      [{:error, reason}] ->
+        {:noreply, put_flash(socket, :error, "Import failed: #{inspect(reason)}")}
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -282,6 +324,16 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
             </button>
 
             <button
+              :if={@project}
+              id="delete-project-button"
+              phx-click="delete_project"
+              data-confirm="Delete this project and all associated data? This cannot be undone."
+              class="rounded-full border border-rose-600 bg-rose-600 px-4 py-2 text-xs font-semibold uppercase shadow-sm text-white hover:bg-rose-700 transition-colors"
+            >
+              Delete
+            </button>
+
+            <button
               :if={@project && latest_run(@project)}
               phx-click="heal_project"
               phx-disable-with="Healing..."
@@ -352,6 +404,56 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
           <% else %>
             <p class="text-sm text-stone-600">No project loaded.</p>
           <% end %>
+        </section>
+
+        <section id="data-management" class="mt-10">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400 mb-4">
+            Data Management
+          </h2>
+          <div class="grid gap-6 md:grid-cols-2">
+            <div class="rounded-2xl border border-stone-200 bg-white p-6">
+              <h3 class="font-bold text-stone-900">Export Project Data</h3>
+              <p class="mt-2 text-xs text-stone-500">
+                Download a ZIP archive containing the source file and all current translations (YAML).
+              </p>
+              <div class="mt-6">
+                <.link
+                  href={~p"/projects/#{@project.id}/export"}
+                  class="inline-flex items-center gap-2 rounded-lg bg-white border border-stone-300 px-4 py-2 text-xs font-bold uppercase text-stone-700 hover:bg-stone-50 transition-colors"
+                >
+                  <.icon name="hero-arrow-down-tray" class="size-4" /> Export Data
+                </.link>
+              </div>
+            </div>
+
+            <div class="rounded-2xl border border-stone-200 bg-white p-6">
+              <h3 class="font-bold text-stone-900">Import / Update Translations</h3>
+              <p class="mt-2 text-xs text-stone-500">
+                Upload an exported ZIP file to merge translations.
+                <span class="block text-rose-500 mt-1 font-semibold">* Must match the current source document.</span>
+              </p>
+              <form phx-submit="import_update" phx-change="validate_import" class="mt-4">
+                <div class="flex items-center gap-4">
+                  <.live_file_input upload={@uploads.import_file} class="text-xs" />
+                  <button
+                    type="submit"
+                    class="rounded-lg bg-stone-900 px-4 py-2 text-xs font-bold uppercase text-white hover:bg-stone-800 disabled:opacity-50"
+                    disabled={@uploads.import_file.entries == []}
+                  >
+                    Import
+                  </button>
+                </div>
+                <%= for entry <- @uploads.import_file.entries do %>
+                  <div class="mt-2 text-xs text-stone-500">
+                    {entry.client_name} - {entry.progress}%
+                    <span :if={entry.preflight_errors != []} class="text-rose-500">
+                      {inspect(entry.preflight_errors)}
+                    </span>
+                  </div>
+                <% end %>
+              </form>
+            </div>
+          </div>
         </section>
 
         <section :if={@recent_translations != []} id="recent-activity" class="mt-10">

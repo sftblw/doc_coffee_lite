@@ -11,8 +11,35 @@ defmodule DocCoffeeLiteWeb.ProjectLive.Index do
       socket
       |> assign(:page_title, "All Projects")
       |> assign(:projects, projects)
+      |> allow_upload(:import_project_file, accept: ~w(.zip), max_entries: 1)
 
     {:ok, socket}
+  end
+
+  @impl true
+  def handle_event("validate_import", _params, socket) do
+    {:noreply, socket}
+  end
+
+  def handle_event("import_new", _params, socket) do
+    uploaded_files =
+      consume_uploaded_entries(socket, :import_project_file, fn %{path: path}, _entry ->
+        DocCoffeeLite.Translation.ImportExport.import_as_new(path)
+      end)
+
+    case uploaded_files do
+      [{:ok, project}] ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Project '#{project.title}' imported successfully.")
+         |> push_navigate(to: ~p"/projects/#{project.id}")}
+
+      [{:error, reason}] ->
+        {:noreply, put_flash(socket, :error, "Import failed: #{inspect(reason)}")}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   @impl true
@@ -49,6 +76,33 @@ defmodule DocCoffeeLiteWeb.ProjectLive.Index do
         </header>
 
         <main class="mx-auto max-w-6xl px-6 pb-16">
+          <section class="mb-10 rounded-3xl border border-stone-200/80 bg-white/80 p-6 shadow-sm backdrop-blur">
+            <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400 mb-4">
+              Import Project
+            </h2>
+            <p class="text-xs text-stone-500 mb-4">
+              Upload a project export file (ZIP) to create a new project.
+            </p>
+            <form phx-submit="import_new" phx-change="validate_import" class="flex items-center gap-4">
+              <.live_file_input upload={@uploads.import_project_file} class="text-xs" />
+              <button
+                type="submit"
+                class="rounded-lg bg-stone-900 px-4 py-2 text-xs font-bold uppercase text-white hover:bg-stone-800 disabled:opacity-50"
+                disabled={@uploads.import_project_file.entries == []}
+              >
+                Import New Project
+              </button>
+            </form>
+            <%= for entry <- @uploads.import_project_file.entries do %>
+              <div class="mt-2 text-xs text-stone-500">
+                {entry.client_name} - {entry.progress}%
+                <span :if={entry.preflight_errors != []} class="text-rose-500">
+                  {inspect(entry.preflight_errors)}
+                </span>
+              </div>
+            <% end %>
+          </section>
+
           <section class="space-y-6">
             <div class="flex items-center justify-between">
               <h1 class="font-display text-3xl">All Projects</h1>
