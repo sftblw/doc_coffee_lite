@@ -16,6 +16,8 @@ and, I don't want to further improve this. this thing is purposed as temporary o
 
 Some considerations and decisions is made by me - parallel structuring, translation format, rolling context...
 
+(I took screenshots - It finally meets my requirements!)
+
 ---
 
 anyway, you'll need...
