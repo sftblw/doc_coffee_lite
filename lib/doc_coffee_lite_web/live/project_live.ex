@@ -430,7 +430,9 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
               <h3 class="font-bold text-stone-900">Import / Update Translations</h3>
               <p class="mt-2 text-xs text-stone-500">
                 Upload an exported ZIP file to merge translations.
-                <span class="block text-rose-500 mt-1 font-semibold">* Must match the current source document.</span>
+                <span class="block text-rose-500 mt-1 font-semibold">
+                  * Must match the current source document.
+                </span>
               </p>
               <form phx-submit="import_update" phx-change="validate_import" class="mt-4">
                 <div class="flex items-center gap-4">

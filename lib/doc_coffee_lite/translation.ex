@@ -18,6 +18,7 @@ defmodule DocCoffeeLite.Translation do
   alias DocCoffeeLite.Translation.GlossaryTerm
   alias DocCoffeeLite.Translation.Workers.TranslationGroupWorker
   alias DocCoffeeLite.Translation.RunCreator
+  alias DocCoffeeLite.Config.LlmConfig
 
   # --- Project ---
 
@@ -40,7 +41,65 @@ defmodule DocCoffeeLite.Translation do
   end
 
   def delete_project(%Project{} = project) do
-    Repo.delete(project)
+    source_document = Repo.get_by(SourceDocument, project_id: project.id)
+
+    result =
+      Repo.transaction(fn ->
+        project_id = project.id
+
+        unit_ids_query =
+          from u in TranslationUnit,
+            join: g in assoc(u, :translation_group),
+            where: g.project_id == ^project_id,
+            select: u.id
+
+        unit_ids = Repo.all(unit_ids_query)
+
+        if unit_ids != [] do
+          from(bt in BlockTranslation, where: bt.translation_unit_id in ^unit_ids)
+          |> Repo.delete_all()
+
+          from(u in TranslationUnit, where: u.id in ^unit_ids)
+          |> Repo.delete_all()
+        end
+
+        from(g in TranslationGroup, where: g.project_id == ^project_id)
+        |> Repo.delete_all()
+
+        from(r in TranslationRun, where: r.project_id == ^project_id)
+        |> Repo.delete_all()
+
+        from(p in PolicySet, where: p.project_id == ^project_id)
+        |> Repo.delete_all()
+
+        from(t in GlossaryTerm, where: t.project_id == ^project_id)
+        |> Repo.delete_all()
+
+        from(c in LlmConfig, where: c.project_id == ^project_id)
+        |> Repo.delete_all()
+
+        if source_document do
+          from(n in DocumentNode, where: n.source_document_id == ^source_document.id)
+          |> Repo.delete_all()
+
+          from(s in SourceDocument, where: s.id == ^source_document.id)
+          |> Repo.delete_all()
+        end
+
+        Repo.delete(project)
+      end)
+
+    case result do
+      {:ok, {:ok, deleted_project}} ->
+        cleanup_source_document_files(source_document)
+        {:ok, deleted_project}
+
+      {:ok, {:error, reason}} ->
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   def change_project(%Project{} = project, attrs \\ %{}) do
@@ -641,5 +700,26 @@ defmodule DocCoffeeLite.Translation do
 
   def change_glossary_term(%GlossaryTerm{} = glossary_term, attrs \\ %{}) do
     GlossaryTerm.changeset(glossary_term, attrs)
+  end
+
+  defp cleanup_source_document_files(nil), do: :ok
+
+  defp cleanup_source_document_files(%SourceDocument{} = source_document) do
+    remove_path(source_document.source_path)
+    remove_path(source_document.work_dir)
+  end
+
+  defp remove_path(nil), do: :ok
+  defp remove_path(""), do: :ok
+
+  defp remove_path(path) do
+    case File.rm_rf(path) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason, _} ->
+        Logger.warning("Failed to remove project path #{path}: #{inspect(reason)}")
+        :ok
+    end
   end
 end
