@@ -96,9 +96,9 @@ defmodule DocCoffeeLiteWeb.ProjectLive.Index do
             <%= for entry <- @uploads.import_project_file.entries do %>
               <div class="mt-2 text-xs text-stone-500">
                 {entry.client_name} - {entry.progress}%
-                <span :if={entry.preflight_errors != []} class="text-rose-500">
-                  {inspect(entry.preflight_errors)}
-                </span>
+                <%= for err <- upload_errors(@uploads.import_project_file, entry) do %>
+                  <span class="text-rose-500">{to_string(err)}</span>
+                <% end %>
               </div>
             <% end %>
           </section>
