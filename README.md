@@ -90,5 +90,29 @@ Visit `http://localhost:4000` to start your first project.
 4. **Translate**: Click "Start". Monitor real-time progress and live translation snippets.
 5. **Export**: Once 100% complete, download your translated EPUB with original formatting perfectly preserved.
 
+## ✨ Feature Deep Dive
+
+### 🧠 Translation Continuity (Rolling Context)
+DocCoffeeLite doesn't just translate sentence by sentence. It processes text in **smart batches**.
+- **Context Awareness**: The summary of the previous batch is passed to the LLM for the next one. This ensures that character names, tone, and plot points remain consistent throughout the book.
+- **Smart Grouping**: It automatically groups sentences into logical chunks (up to a token limit) to maximize LLM performance.
+
+### 🛡️ Quality Assurance Systems
+- **Auto-Healing**: If an LLM returns broken JSON or missing tags, the system **automatically detects it** and retries with specific error feedback, fixing most issues without human intervention.
+- **Similarity Guard**: Sometimes LLMs get lazy and just copy the source text. The **Similarity Guard** detects if the translation is too similar to the source (e.g., >90% match) and automatically flags it as "Dirty" for re-translation or review.
+
+### 📝 Review & Editing
+- **Dirty Filter**: Use the "Dirty Only" filter in the translation view to quickly find and fix problematic units (failed translations, high similarity, or manual flags).
+- **Bulk Actions**: You can perform Find & Replace operations across the entire project or mark filtered results for re-translation in bulk.
+
+### 📦 Import / Export
+- **Migration Friendly**: Easily move your project to another server or back it up.
+- **JSON + Source**: The export bundle includes all your translation data (metadata, progress) and the original source file, ensuring a perfect restore.
+- **Offline Editing**: You can export the project, edit the `doc_coffee.json` manually if needed, and import it back (experimental).
+
+### 📚 Glossary & Policies
+- **Glossary**: Define specific terms (Character names, Locations) that must be translated consistently.
+- **Policies**: Set high-level rules (e.g., "Translate strictly", "Use honorifics") to guide the LLM's style.
+
 ---
 Built with Elixir, Phoenix, and ❤️ by sftblw.
