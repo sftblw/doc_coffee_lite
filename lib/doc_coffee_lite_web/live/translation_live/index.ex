@@ -16,6 +16,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
      |> assign(:limit, 100)
      |> assign(:show_bulk, false)
      |> assign(:dirty_count, dirty_count)
+     |> assign(:show_dirty_only, false)
      |> assign(:bulk_form, to_form(%{"find" => "", "replace" => ""}))
      |> stream(:units, [])}
   end
@@ -24,9 +25,14 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   def handle_params(params, _url, socket) do
     query = params["q"] || ""
     page = String.to_integer(params["page"] || "1")
+    show_dirty_only = params["dirty"] == "true"
     limit = socket.assigns.limit
 
-    total_count = Translation.count_units_for_review(socket.assigns.project.id, query)
+    total_count =
+      Translation.count_units_for_review(socket.assigns.project.id, query,
+        only_dirty: show_dirty_only
+      )
+
     total_pages = max(1, ceil(total_count / limit))
     # Clip page to valid range
     page = page |> max(1) |> min(total_pages)
@@ -35,6 +41,7 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
      socket
      |> assign(:search, query)
      |> assign(:page, page)
+     |> assign(:show_dirty_only, show_dirty_only)
      |> assign(:total_count, total_count)
      |> assign(:total_pages, total_pages)
      |> assign(:offset, (page - 1) * limit)
@@ -54,19 +61,43 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   end
 
   @impl true
+  def handle_event("toggle_dirty_filter", _, socket) do
+    path =
+      build_path(
+        socket.assigns.project.id,
+        socket.assigns.search,
+        1,
+        !socket.assigns.show_dirty_only
+      )
+
+    {:noreply, push_patch(socket, to: path)}
+  end
+
+  @impl true
   def handle_event("clear_search", _, socket) do
-    {:noreply, push_patch(socket, to: ~p"/projects/#{socket.assigns.project.id}/translations")}
+    {:noreply,
+     push_patch(socket,
+       to:
+         build_path(
+           socket.assigns.project.id,
+           "",
+           1,
+           socket.assigns.show_dirty_only
+         )
+     )}
   end
 
   @impl true
   def handle_event("search", %{"query" => query}, socket) do
-    path = build_path(socket.assigns.project.id, query, 1)
+    path = build_path(socket.assigns.project.id, query, 1, socket.assigns.show_dirty_only)
     {:noreply, push_patch(socket, to: path)}
   end
 
   @impl true
   def handle_event("goto_page", %{"page" => page}, socket) do
-    path = build_path(socket.assigns.project.id, socket.assigns.search, page)
+    path =
+      build_path(socket.assigns.project.id, socket.assigns.search, page, socket.assigns.show_dirty_only)
+
     {:noreply, push_patch(socket, to: path)}
   end
 
@@ -120,10 +151,11 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
     end
   end
 
-  defp build_path(project_id, search, page) do
+  defp build_path(project_id, search, page, only_dirty) do
     params = %{}
     params = if search != "", do: Map.put(params, "q", search), else: params
     params = if page != "1" && page != 1, do: Map.put(params, "page", page), else: params
+    params = if only_dirty, do: Map.put(params, "dirty", "true"), else: params
 
     if map_size(params) == 0 do
       ~p"/projects/#{project_id}/translations"
@@ -137,7 +169,8 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
       Translation.list_units_for_review(socket.assigns.project.id,
         offset: socket.assigns.offset,
         limit: socket.assigns.limit,
-        search: socket.assigns.search
+        search: socket.assigns.search,
+        only_dirty: socket.assigns.show_dirty_only
       )
 
     socket
@@ -200,6 +233,19 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
                   <.icon name="hero-x-mark" class="size-4" />
                 </button>
               </form>
+              <button
+                phx-click="toggle_dirty_filter"
+                class={[
+                  "flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold uppercase transition-all shadow-sm",
+                  @show_dirty_only && "bg-rose-600 text-white border-rose-600",
+                  !@show_dirty_only && "bg-white text-stone-700 border-stone-300 hover:bg-stone-50"
+                ]}
+                title="Toggle Dirty Filter"
+              >
+                <.icon name="hero-funnel" class="size-4" />
+                <span :if={@show_dirty_only}>Dirty Only</span>
+                <span :if={!@show_dirty_only}>All</span>
+              </button>
               <button
                 phx-click="toggle_bulk"
                 class={[

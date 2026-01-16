@@ -438,7 +438,10 @@ defmodule DocCoffeeLite.Translation do
         order_by: [asc: g.position, asc: u.position]
 
     # APPLY FILTER FIRST
-    query = query |> apply_review_search_filter(search)
+    query =
+      query
+      |> apply_review_search_filter(search)
+      |> apply_dirty_filter(Keyword.get(opts, :only_dirty, false))
 
     # THEN APPLY PAGINATION
     query =
@@ -450,7 +453,7 @@ defmodule DocCoffeeLite.Translation do
     Repo.all(query)
   end
 
-  def count_units_for_review(project_id, search) do
+  def count_units_for_review(project_id, search, opts \\ []) do
     query =
       from u in TranslationUnit,
         join: g in assoc(u, :translation_group),
@@ -458,8 +461,15 @@ defmodule DocCoffeeLite.Translation do
 
     query
     |> apply_review_search_filter(search)
+    |> apply_dirty_filter(Keyword.get(opts, :only_dirty, false))
     |> Repo.aggregate(:count, :id)
   end
+
+  defp apply_dirty_filter(query, true) do
+    from u in query, where: u.is_dirty == true
+  end
+
+  defp apply_dirty_filter(query, _), do: query
 
   defp apply_review_search_filter(query, search) do
     if search && search != "" do
