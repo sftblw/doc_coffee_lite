@@ -193,47 +193,55 @@ defmodule DocCoffeeLite.Translation.ImportExport do
     result =
       Repo.transaction(fn ->
         Enum.reduce(translations, %{count: 0, skipped: 0}, fn entry, acc ->
-          unit_key = entry["unit_key"]
-          source_hash = entry["source_hash"]
+          entry = normalize_entry(entry)
+          unit_key = entry_value(entry, "unit_key")
+          source_hash = entry_value(entry, "source_hash")
+          translated_text = entry_value(entry, "translated_text")
+          translated_markup = entry_value(entry, "translated_markup") || translated_text
+          is_dirty = entry_value(entry, "is_dirty")
+          is_dirty = if is_boolean(is_dirty), do: is_dirty, else: false
 
-          units =
-            Repo.all(
-              from u in TranslationUnit,
-                join: g in assoc(u, :translation_group),
-                where: g.project_id == ^project.id and u.unit_key == ^unit_key
-            )
+          if not is_binary(unit_key) do
+            %{acc | skipped: acc.skipped + 1}
+          else
+            units =
+              Repo.all(
+                from u in TranslationUnit,
+                  join: g in assoc(u, :translation_group),
+                  where: g.project_id == ^project.id and u.unit_key == ^unit_key
+              )
 
-          matching_units =
-            if is_binary(source_hash) do
-              Enum.filter(units, &(&1.source_hash == source_hash))
-            else
-              units
-            end
+            matching_units =
+              if is_binary(source_hash) do
+                Enum.filter(units, &(&1.source_hash == source_hash))
+              else
+                units
+              end
 
-          case matching_units do
-            [] ->
-              %{acc | skipped: acc.skipped + 1}
+            case matching_units do
+              [] ->
+                %{acc | skipped: acc.skipped + 1}
 
-            _ ->
-              # Create BlockTranslation
-              Enum.reduce(matching_units, acc, fn unit, acc_inner ->
-                {:ok, _} =
-                  Translation.create_block_translation(%{
-                    translation_unit_id: unit.id,
-                    translation_run_id: nil,
-                    translated_text: entry["translated_text"],
-                    translated_markup: entry["translated_markup"] || entry["translated_text"],
-                    metadata: %{"source" => "import"}
+              _ ->
+                Enum.reduce(matching_units, acc, fn unit, acc_inner ->
+                  {:ok, _} =
+                    Translation.create_block_translation(%{
+                      translation_unit_id: unit.id,
+                      translation_run_id: nil,
+                      translated_text: translated_text,
+                      translated_markup: translated_markup,
+                      metadata: %{"source" => "import"}
+                    })
+
+                  # Mark as translated
+                  Translation.update_translation_unit(unit, %{
+                    status: "translated",
+                    is_dirty: is_dirty
                   })
 
-                # Mark as translated
-                Translation.update_translation_unit(unit, %{
-                  status: "translated",
-                  is_dirty: entry["is_dirty"] || false
-                })
-
-                %{acc_inner | count: acc_inner.count + 1}
-              end)
+                  %{acc_inner | count: acc_inner.count + 1}
+                end)
+            end
           end
         end)
       end)
@@ -377,4 +385,27 @@ defmodule DocCoffeeLite.Translation.ImportExport do
         {:ok, []}
     end
   end
+
+  defp normalize_entry(entry) when is_map(entry), do: entry
+
+  defp normalize_entry(entry) when is_list(entry) do
+    Map.new(entry)
+  end
+
+  defp normalize_entry(_entry), do: %{}
+
+  defp entry_value(entry, "unit_key"),
+    do: Map.get(entry, "unit_key") || Map.get(entry, :unit_key)
+
+  defp entry_value(entry, "source_hash"),
+    do: Map.get(entry, "source_hash") || Map.get(entry, :source_hash)
+
+  defp entry_value(entry, "translated_text"),
+    do: Map.get(entry, "translated_text") || Map.get(entry, :translated_text)
+
+  defp entry_value(entry, "translated_markup"),
+    do: Map.get(entry, "translated_markup") || Map.get(entry, :translated_markup)
+
+  defp entry_value(entry, "is_dirty"),
+    do: Map.get(entry, "is_dirty") || Map.get(entry, :is_dirty)
 end

@@ -2,11 +2,11 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
   use DocCoffeeLiteWeb, :live_view
 
   import Ecto.Query
+  import DocCoffeeLiteWeb.Components.Dropdown
   alias DocCoffeeLite.Repo
   alias DocCoffeeLite.Translation
   alias DocCoffeeLite.Translation.{Project, TranslationRun, SourceDocument, TranslationUnit}
   alias DocCoffeeLiteWeb.ProjectFormatter
-  import DocCoffeeLiteWeb.Components.Dropdown
   alias DocCoffeeLiteWeb.Components.List, as: CList
 
   @impl true
@@ -318,8 +318,8 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
             >
               <.icon name="hero-pause" class="size-4" /> Pause
             </button>
-
-            <!-- Download (Visible if ready) -->
+            
+    <!-- Download (Visible if ready) -->
             <.link
               :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
               id="project-download"
@@ -329,8 +329,8 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
             >
               <.icon name="hero-arrow-down-tray" class="size-4" /> Download
             </.link>
-
-            <!-- Settings Dropdown -->
+            
+    <!-- Settings Dropdown -->
             <.dropdown id="project-settings-dropdown" position="bottom-end">
               <:trigger>
                 <button
@@ -344,43 +344,50 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
                 <CList.list>
                   <:item
                     :if={@project && latest_run(@project)}
-                    phx-click="heal_project"
                     class="hover:bg-stone-50 cursor-pointer px-4 py-3 text-xs text-stone-600 font-bold uppercase border-b border-stone-50"
                   >
-                    <div class="flex items-center gap-3">
+                    <button
+                      type="button"
+                      phx-click="heal_project"
+                      class="flex w-full items-center gap-3 text-left"
+                    >
                       <.icon name="hero-wrench-screwdriver" class="size-4 text-stone-400" />
                       Heal Structure
-                    </div>
-                  </:item>
-                  
-                  <:item
-                    :if={@project}
-                    phx-click="reset_project"
-                    data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
-                    class="hover:bg-rose-50 cursor-pointer px-4 py-3 text-xs text-rose-600 font-bold uppercase border-b border-stone-50"
-                  >
-                    <div class="flex items-center gap-3">
-                      <.icon name="hero-arrow-path" class="size-4" />
-                      Reset Progress
-                    </div>
+                    </button>
                   </:item>
 
                   <:item
                     :if={@project}
-                    phx-click="delete_project"
-                    data-confirm="Delete this project and all associated data? This cannot be undone."
+                    class="hover:bg-rose-50 cursor-pointer px-4 py-3 text-xs text-rose-600 font-bold uppercase border-b border-stone-50"
+                  >
+                    <button
+                      type="button"
+                      phx-click="reset_project"
+                      data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
+                      class="flex w-full items-center gap-3 text-left"
+                    >
+                      <.icon name="hero-arrow-path" class="size-4" /> Reset Progress
+                    </button>
+                  </:item>
+
+                  <:item
+                    :if={@project}
                     class="hover:bg-rose-50 cursor-pointer px-4 py-3 text-xs text-rose-600 font-bold uppercase"
                   >
-                    <div class="flex items-center gap-3">
-                      <.icon name="hero-trash" class="size-4" />
-                      Delete Project
-                    </div>
+                    <button
+                      type="button"
+                      phx-click="delete_project"
+                      data-confirm="Delete this project and all associated data? This cannot be undone."
+                      class="flex w-full items-center gap-3 text-left"
+                    >
+                      <.icon name="hero-trash" class="size-4" /> Delete Project
+                    </button>
                   </:item>
                 </CList.list>
               </:content>
             </.dropdown>
-
-            <!-- Back Button -->
+            
+    <!-- Back Button -->
             <.link
               navigate={~p"/"}
               class="flex items-center justify-center h-9 w-9 rounded-full border border-stone-200 bg-white shadow-sm hover:bg-stone-50 transition-colors text-stone-400"
