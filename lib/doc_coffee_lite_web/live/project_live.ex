@@ -2,12 +2,10 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
   use DocCoffeeLiteWeb, :live_view
 
   import Ecto.Query
-  import DocCoffeeLiteWeb.Components.Dropdown
   alias DocCoffeeLite.Repo
   alias DocCoffeeLite.Translation
   alias DocCoffeeLite.Translation.{Project, TranslationRun, SourceDocument, TranslationUnit}
   alias DocCoffeeLiteWeb.ProjectFormatter
-  alias DocCoffeeLiteWeb.Components.List, as: CList
 
   @impl true
   def mount(%{"project_id" => project_id}, _session, socket) do
@@ -299,103 +297,149 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
             </p>
           </div>
 
-          <div class="flex flex-wrap items-center gap-3">
-            <!-- Start/Pause Group -->
-            <button
-              :if={@project && can_start?(@project, latest_run(@project))}
-              phx-click="start"
-              class="rounded-full bg-stone-900 px-5 py-2 text-xs font-bold text-white uppercase shadow-md hover:bg-stone-800 transition-colors flex items-center gap-2"
-              title="Start Translation"
-            >
-              <.icon name="hero-play" class="size-4" /> Start
-            </button>
+                    <div class="flex flex-wrap items-center gap-2">
 
-            <button
-              :if={@project && can_pause?(latest_run(@project))}
-              phx-click="pause"
-              class="rounded-full border border-stone-200 bg-white px-5 py-2 text-xs font-bold uppercase shadow-sm hover:bg-stone-50 transition-colors flex items-center gap-2"
-              title="Pause Translation"
-            >
-              <.icon name="hero-pause" class="size-4" /> Pause
-            </button>
-            
-    <!-- Download (Visible if ready) -->
-            <.link
-              :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
-              id="project-download"
-              href={download_path(@project)}
-              class="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-700 shadow-sm transition hover:bg-stone-50"
-              title="Download EPUB"
-            >
-              <.icon name="hero-arrow-down-tray" class="size-4" /> Download
-            </.link>
-            
-    <!-- Settings Dropdown -->
-            <.dropdown id="project-settings-dropdown" position="bottom-end">
-              <:trigger>
-                <button
-                  class="flex items-center justify-center h-9 w-9 rounded-full border border-stone-200 bg-white shadow-sm hover:bg-stone-50 transition-colors text-stone-500"
-                  title="Project Actions"
-                >
-                  <.icon name="hero-ellipsis-vertical" class="size-5" />
-                </button>
-              </:trigger>
-              <:content class="w-48 bg-white rounded-xl shadow-xl border border-stone-100 overflow-hidden z-50">
-                <CList.list>
-                  <:item
-                    :if={@project && latest_run(@project)}
-                    class="hover:bg-stone-50 cursor-pointer px-4 py-3 text-xs text-stone-600 font-bold uppercase border-b border-stone-50"
-                  >
-                    <button
-                      type="button"
-                      phx-click="heal_project"
-                      class="flex w-full items-center gap-3 text-left"
-                    >
-                      <.icon name="hero-wrench-screwdriver" class="size-4 text-stone-400" />
-                      Heal Structure
-                    </button>
-                  </:item>
+                      <!-- Start/Pause Group -->
 
-                  <:item
-                    :if={@project}
-                    class="hover:bg-rose-50 cursor-pointer px-4 py-3 text-xs text-rose-600 font-bold uppercase border-b border-stone-50"
-                  >
-                    <button
-                      type="button"
-                      phx-click="reset_project"
-                      data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
-                      class="flex w-full items-center gap-3 text-left"
-                    >
-                      <.icon name="hero-arrow-path" class="size-4" /> Reset Progress
-                    </button>
-                  </:item>
+                      <button
 
-                  <:item
-                    :if={@project}
-                    class="hover:bg-rose-50 cursor-pointer px-4 py-3 text-xs text-rose-600 font-bold uppercase"
-                  >
-                    <button
-                      type="button"
-                      phx-click="delete_project"
-                      data-confirm="Delete this project and all associated data? This cannot be undone."
-                      class="flex w-full items-center gap-3 text-left"
-                    >
-                      <.icon name="hero-trash" class="size-4" /> Delete Project
-                    </button>
-                  </:item>
-                </CList.list>
-              </:content>
-            </.dropdown>
-            
-    <!-- Back Button -->
-            <.link
-              navigate={~p"/"}
-              class="flex items-center justify-center h-9 w-9 rounded-full border border-stone-200 bg-white shadow-sm hover:bg-stone-50 transition-colors text-stone-400"
-              title="Back to Projects"
-            >
-              <.icon name="hero-arrow-left" class="size-5" />
-            </.link>
-          </div>
+                        :if={@project && can_start?(@project, latest_run(@project))}
+
+                        phx-click="start"
+
+                        class="rounded-full bg-stone-900 px-5 py-2 text-xs font-bold text-white uppercase shadow-md hover:bg-stone-800 transition-colors flex items-center gap-2"
+
+                        title="Start Translation"
+
+                      >
+
+                        <.icon name="hero-play" class="size-4" /> Start
+
+                      </button>
+
+          
+
+                      <button
+
+                        :if={@project && can_pause?(latest_run(@project))}
+
+                        phx-click="pause"
+
+                        class="rounded-full border-2 border-stone-200 bg-white px-5 py-2 text-xs font-bold uppercase shadow-sm hover:bg-stone-50 transition-colors flex items-center gap-2"
+
+                        title="Pause Translation"
+
+                      >
+
+                        <.icon name="hero-pause" class="size-4" /> Pause
+
+                      </button>
+
+          
+
+                      <!-- Download (Visible if ready) -->
+
+                      <.link
+
+                        :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
+
+                        id="project-download"
+
+                        href={download_path(@project)}
+
+                        class="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-700 shadow-sm transition hover:bg-stone-50"
+
+                        title="Download EPUB"
+
+                      >
+
+                        <.icon name="hero-arrow-down-tray" class="size-4" /> Download
+
+                      </.link>
+
+          
+
+                      <div class="w-px h-6 bg-stone-300 mx-2"></div>
+
+          
+
+                      <!-- Secondary Actions -->
+
+                      <button
+
+                        :if={@project && latest_run(@project)}
+
+                        phx-click="heal_project"
+
+                        class="p-2 text-stone-400 hover:text-indigo-600 transition-colors rounded-full hover:bg-indigo-50"
+
+                        title="Heal Structure"
+
+                      >
+
+                        <.icon name="hero-wrench-screwdriver" class="size-5" />
+
+                      </button>
+
+          
+
+                      <button
+
+                        :if={@project}
+
+                        phx-click="reset_project"
+
+                        data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
+
+                        class="p-2 text-stone-400 hover:text-rose-600 transition-colors rounded-full hover:bg-rose-50"
+
+                        title="Reset Progress"
+
+                      >
+
+                        <.icon name="hero-arrow-path" class="size-5" />
+
+                      </button>
+
+          
+
+                      <button
+
+                        :if={@project}
+
+                        phx-click="delete_project"
+
+                        data-confirm="Delete this project and all associated data? This cannot be undone."
+
+                        class="p-2 text-stone-400 hover:text-rose-600 transition-colors rounded-full hover:bg-rose-50"
+
+                        title="Delete Project"
+
+                      >
+
+                        <.icon name="hero-trash" class="size-5" />
+
+                      </button>
+
+          
+
+                      <!-- Back Button -->
+
+                      <.link
+
+                        navigate={~p"/"}
+
+                        class="p-2 text-stone-400 hover:text-stone-600 transition-colors rounded-full hover:bg-stone-100 ml-2"
+
+                        title="Back to Projects"
+
+                      >
+
+                        <.icon name="hero-arrow-left" class="size-5" />
+
+                      </.link>
+
+                    </div>
         </header>
 
         <section
