@@ -6,6 +6,8 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
   alias DocCoffeeLite.Translation
   alias DocCoffeeLite.Translation.{Project, TranslationRun, SourceDocument, TranslationUnit}
   alias DocCoffeeLiteWeb.ProjectFormatter
+  import DocCoffeeLiteWeb.Components.Dropdown
+  alias DocCoffeeLiteWeb.Components.List, as: CList
 
   @impl true
   def mount(%{"project_id" => project_id}, _session, socket) do
@@ -298,65 +300,93 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
           </div>
 
           <div class="flex flex-wrap items-center gap-3">
+            <!-- Start/Pause Group -->
             <button
               :if={@project && can_start?(@project, latest_run(@project))}
               phx-click="start"
-              class="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white uppercase shadow-sm hover:bg-emerald-700 transition-colors"
+              class="rounded-full bg-stone-900 px-5 py-2 text-xs font-bold text-white uppercase shadow-md hover:bg-stone-800 transition-colors flex items-center gap-2"
+              title="Start Translation"
             >
-              Start
+              <.icon name="hero-play" class="size-4" /> Start
             </button>
 
             <button
               :if={@project && can_pause?(latest_run(@project))}
               phx-click="pause"
-              class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm hover:bg-stone-50 transition-colors"
+              class="rounded-full border border-stone-200 bg-white px-5 py-2 text-xs font-bold uppercase shadow-sm hover:bg-stone-50 transition-colors flex items-center gap-2"
+              title="Pause Translation"
             >
-              Pause
+              <.icon name="hero-pause" class="size-4" /> Pause
             </button>
 
-            <button
-              :if={@project}
-              phx-click="reset_project"
-              data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
-              class="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold uppercase shadow-sm text-rose-600 hover:bg-rose-100 transition-colors"
-            >
-              Reset
-            </button>
-
-            <button
-              :if={@project}
-              id="delete-project-button"
-              phx-click="delete_project"
-              data-confirm="Delete this project and all associated data? This cannot be undone."
-              class="rounded-full border border-rose-600 bg-rose-600 px-4 py-2 text-xs font-semibold uppercase shadow-sm text-white hover:bg-rose-700 transition-colors"
-            >
-              Delete
-            </button>
-
-            <button
-              :if={@project && latest_run(@project)}
-              phx-click="heal_project"
-              phx-disable-with="Healing..."
-              class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm text-stone-600 hover:bg-stone-50"
-              title="Auto-heal structure & whitespace"
-            >
-              Heal
-            </button>
-
+            <!-- Download (Visible if ready) -->
             <.link
               :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
               id="project-download"
               href={download_path(@project)}
-              class="inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-2 text-xs font-semibold uppercase text-white shadow-sm transition hover:bg-stone-800"
+              class="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-700 shadow-sm transition hover:bg-stone-50"
+              title="Download EPUB"
             >
-              Download <.icon name="hero-arrow-down-tray" class="size-4" />
+              <.icon name="hero-arrow-down-tray" class="size-4" /> Download
             </.link>
 
+            <!-- Settings Dropdown -->
+            <.dropdown id="project-settings-dropdown" position="bottom-end">
+              <:trigger>
+                <button
+                  class="flex items-center justify-center h-9 w-9 rounded-full border border-stone-200 bg-white shadow-sm hover:bg-stone-50 transition-colors text-stone-500"
+                  title="Project Actions"
+                >
+                  <.icon name="hero-ellipsis-vertical" class="size-5" />
+                </button>
+              </:trigger>
+              <:content class="w-48 bg-white rounded-xl shadow-xl border border-stone-100 overflow-hidden z-50">
+                <CList.list>
+                  <:item
+                    :if={@project && latest_run(@project)}
+                    phx-click="heal_project"
+                    class="hover:bg-stone-50 cursor-pointer px-4 py-3 text-xs text-stone-600 font-bold uppercase border-b border-stone-50"
+                  >
+                    <div class="flex items-center gap-3">
+                      <.icon name="hero-wrench-screwdriver" class="size-4 text-stone-400" />
+                      Heal Structure
+                    </div>
+                  </:item>
+                  
+                  <:item
+                    :if={@project}
+                    phx-click="reset_project"
+                    data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
+                    class="hover:bg-rose-50 cursor-pointer px-4 py-3 text-xs text-rose-600 font-bold uppercase border-b border-stone-50"
+                  >
+                    <div class="flex items-center gap-3">
+                      <.icon name="hero-arrow-path" class="size-4" />
+                      Reset Progress
+                    </div>
+                  </:item>
+
+                  <:item
+                    :if={@project}
+                    phx-click="delete_project"
+                    data-confirm="Delete this project and all associated data? This cannot be undone."
+                    class="hover:bg-rose-50 cursor-pointer px-4 py-3 text-xs text-rose-600 font-bold uppercase"
+                  >
+                    <div class="flex items-center gap-3">
+                      <.icon name="hero-trash" class="size-4" />
+                      Delete Project
+                    </div>
+                  </:item>
+                </CList.list>
+              </:content>
+            </.dropdown>
+
+            <!-- Back Button -->
             <.link
               navigate={~p"/"}
-              class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase shadow-sm"
+              class="flex items-center justify-center h-9 w-9 rounded-full border border-stone-200 bg-white shadow-sm hover:bg-stone-50 transition-colors text-stone-400"
+              title="Back to Projects"
             >
-              Back
+              <.icon name="hero-arrow-left" class="size-5" />
             </.link>
           </div>
         </header>
