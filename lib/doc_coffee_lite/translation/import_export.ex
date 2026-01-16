@@ -7,7 +7,7 @@ defmodule DocCoffeeLite.Translation.ImportExport do
   require Logger
   alias DocCoffeeLite.Repo
   alias DocCoffeeLite.Translation
-  alias DocCoffeeLite.Translation.{Project, SourceDocument, TranslationUnit}
+  alias DocCoffeeLite.Translation.{Project, SourceDocument, TranslationUnit, TranslationRun}
   alias DocCoffeeLite.Epub
   alias DocCoffeeLite.Translation.Segmenter
   alias DocCoffeeLite.Translation.Persistence
@@ -157,7 +157,8 @@ defmodule DocCoffeeLite.Translation.ImportExport do
           with {:ok, manifest} <- read_manifest(tmp_dir),
                {:ok, translations} <- read_translations(tmp_dir, manifest),
                :ok <- verify_compatibility(project, manifest),
-               {:ok, count} <- apply_translations(project, translations) do
+               {:ok, run_id} <- ensure_run_id(project),
+               {:ok, count} <- apply_translations(project, translations, run_id) do
             {:ok, count}
           end
 
@@ -189,7 +190,7 @@ defmodule DocCoffeeLite.Translation.ImportExport do
     end
   end
 
-  defp apply_translations(project, translations) do
+  defp apply_translations(project, translations, run_id) do
     result =
       Repo.transaction(fn ->
         Enum.reduce(translations, %{count: 0, skipped: 0}, fn entry, acc ->
@@ -227,7 +228,7 @@ defmodule DocCoffeeLite.Translation.ImportExport do
                   {:ok, _} =
                     Translation.create_block_translation(%{
                       translation_unit_id: unit.id,
-                      translation_run_id: nil,
+                      translation_run_id: run_id,
                       translated_text: translated_text,
                       translated_markup: translated_markup,
                       metadata: %{"source" => "import"}
@@ -272,7 +273,8 @@ defmodule DocCoffeeLite.Translation.ImportExport do
                {:ok, project} <- create_project_from_manifest(manifest),
                {:ok, source_doc} <- setup_source_document(project, tmp_dir, manifest),
                :ok <- parse_source_document(project, source_doc),
-               {:ok, _count} <- apply_translations(project, translations) do
+               {:ok, run_id} <- ensure_run_id(project),
+               {:ok, _count} <- apply_translations(project, translations, run_id) do
             {:ok, project}
           end
 
@@ -384,6 +386,33 @@ defmodule DocCoffeeLite.Translation.ImportExport do
         Logger.warning("Translations file missing; import will proceed with no translations.")
         {:ok, []}
     end
+  end
+
+  defp ensure_run_id(%Project{id: project_id}) do
+    case latest_run_id(project_id) do
+      nil ->
+        case Translation.create_translation_run(%{
+               project_id: project_id,
+               status: "draft",
+               progress: 0
+             }) do
+          {:ok, run} -> {:ok, run.id}
+          {:error, reason} -> {:error, {:run_create_failed, reason}}
+        end
+
+      run_id ->
+        {:ok, run_id}
+    end
+  end
+
+  defp latest_run_id(project_id) do
+    Repo.one(
+      from r in TranslationRun,
+        where: r.project_id == ^project_id,
+        order_by: [desc: r.inserted_at],
+        select: r.id,
+        limit: 1
+    )
   end
 
   defp normalize_entry(entry) when is_map(entry), do: entry
