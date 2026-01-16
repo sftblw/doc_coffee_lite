@@ -21,7 +21,6 @@ defmodule DocCoffeeLite.Translation.RunCreator do
     with {:ok, policy_snapshot} <- PolicySnapshot.build(project_id, policy_opts),
          {:ok, glossary_snapshot} <- GlossarySnapshot.build(project_id, glossary_opts),
          {:ok, llm_snapshot} <- resolve_llm_snapshot(project_id, llm_snapshot_opt, llm_opts) do
-      
       attrs = %{
         project_id: project_id,
         status: run_status,

@@ -3,10 +3,21 @@ defmodule DocCoffeeLiteWeb.BlockEditLive do
 
   import Ecto.Query
   alias DocCoffeeLite.Repo
-  alias DocCoffeeLite.Translation.{BlockTranslation, Project, TranslationGroup, TranslationRun, TranslationUnit}
+
+  alias DocCoffeeLite.Translation.{
+    BlockTranslation,
+    Project,
+    TranslationGroup,
+    TranslationRun,
+    TranslationUnit
+  }
 
   @impl true
-  def mount(%{"project_id" => project_id, "run_id" => run_id, "group_id" => group_id}, _session, socket) do
+  def mount(
+        %{"project_id" => project_id, "run_id" => run_id, "group_id" => group_id},
+        _session,
+        socket
+      ) do
     socket =
       socket
       |> assign(:project_id, project_id)
@@ -24,9 +35,14 @@ defmodule DocCoffeeLiteWeb.BlockEditLive do
           |> assign(:run, run)
           |> assign(:group, group)
           |> load_blocks()
+
         {:ok, socket}
+
       _ ->
-        {:ok, socket |> put_flash(:error, "Not found") |> push_navigate(to: ~p"/projects/#{project_id}")}
+        {:ok,
+         socket
+         |> put_flash(:error, "Not found")
+         |> push_navigate(to: ~p"/projects/#{project_id}")}
     end
   end
 
@@ -35,9 +51,13 @@ defmodule DocCoffeeLiteWeb.BlockEditLive do
     unit_id = params["unit_id"]
     run_id = socket.assigns.run_id
     markup = params["translated_markup"]
-    
-    existing = Repo.one(from b in BlockTranslation, where: b.translation_run_id == ^run_id and b.translation_unit_id == ^unit_id)
-    
+
+    existing =
+      Repo.one(
+        from b in BlockTranslation,
+          where: b.translation_run_id == ^run_id and b.translation_unit_id == ^unit_id
+      )
+
     attrs = %{
       translation_run_id: run_id,
       translation_unit_id: unit_id,
@@ -46,7 +66,7 @@ defmodule DocCoffeeLiteWeb.BlockEditLive do
       status: "edited"
     }
 
-    result = 
+    result =
       case existing do
         nil -> %BlockTranslation{} |> BlockTranslation.changeset(attrs) |> Repo.insert()
         b -> b |> BlockTranslation.changeset(attrs) |> Repo.update()
@@ -67,7 +87,9 @@ defmodule DocCoffeeLiteWeb.BlockEditLive do
           <h1 class="text-3xl font-display">Review: {@project && @project.title}</h1>
           <p class="text-stone-600">Group: {@group && @group.group_key}</p>
         </div>
-        <.link navigate={~p"/projects/#{@project_id}"} class="border px-4 py-2 rounded-full">Back</.link>
+        <.link navigate={~p"/projects/#{@project_id}"} class="border px-4 py-2 rounded-full">
+          Back
+        </.link>
       </header>
 
       <div class="space-y-8">
@@ -83,8 +105,17 @@ defmodule DocCoffeeLiteWeb.BlockEditLive do
               <p class="text-xs font-semibold uppercase text-stone-400 mb-2">Translation</p>
               <form phx-submit="save-block" class="space-y-3">
                 <input type="hidden" name="block[unit_id]" value={block.unit.id} />
-                <textarea name="block[translated_markup]" rows="6" class="w-full border rounded-xl p-3 text-sm font-mono">{(block.translation && block.translation.translated_markup) || block.unit.source_markup}</textarea>
-                <button type="submit" class="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-semibold">Save</button>
+                <textarea
+                  name="block[translated_markup]"
+                  rows="6"
+                  class="w-full border rounded-xl p-3 text-sm font-mono"
+                >{(block.translation && block.translation.translated_markup) || block.unit.source_markup}</textarea>
+                <button
+                  type="submit"
+                  class="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                >
+                  Save
+                </button>
               </form>
             </div>
           </div>
@@ -104,13 +135,24 @@ defmodule DocCoffeeLiteWeb.BlockEditLive do
   defp load_blocks(socket) do
     group_id = socket.assigns.group_id
     run_id = socket.assigns.run_id
-    
-    units = Repo.all(from u in TranslationUnit, where: u.translation_group_id == ^group_id, order_by: [asc: u.position])
+
+    units =
+      Repo.all(
+        from u in TranslationUnit,
+          where: u.translation_group_id == ^group_id,
+          order_by: [asc: u.position]
+      )
+
     unit_ids = Enum.map(units, & &1.id)
-    
-    translations = Repo.all(from b in BlockTranslation, where: b.translation_run_id == ^run_id and b.translation_unit_id in ^unit_ids)
+
+    translations =
+      Repo.all(
+        from b in BlockTranslation,
+          where: b.translation_run_id == ^run_id and b.translation_unit_id in ^unit_ids
+      )
+
     trans_map = Map.new(translations, &{&1.translation_unit_id, &1})
-    
+
     blocks = Enum.map(units, fn u -> %{unit: u, translation: Map.get(trans_map, u.id)} end)
     assign(socket, :blocks, blocks)
   end

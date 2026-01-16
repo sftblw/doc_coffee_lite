@@ -4,7 +4,7 @@ defmodule DocCoffeeLite.Repo.Migrations.AddUniqueIndexes do
   def change do
     # Drop existing non-unique indexes that we want to replace with unique ones
     drop_if_exists index(:source_documents, [:project_id])
-    
+
     create unique_index(:source_documents, [:project_id])
     create unique_index(:document_nodes, [:source_document_id, :node_id])
     create unique_index(:translation_groups, [:project_id, :group_key])
@@ -12,7 +12,7 @@ defmodule DocCoffeeLite.Repo.Migrations.AddUniqueIndexes do
     create unique_index(:glossary_terms, [:project_id, :source_text])
     create unique_index(:policy_sets, [:project_id, :policy_key])
     create unique_index(:llm_configs, [:project_id, :usage_type, :tier])
-    
+
     # Missing index for block_translations upsert
     create unique_index(:block_translations, [:translation_run_id, :translation_unit_id])
   end

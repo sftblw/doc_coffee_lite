@@ -55,7 +55,8 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
   end
 
   defp global_policy(_opts) do
-    %{policy_key: "auto:global",
+    %{
+      policy_key: "auto:global",
       title: "Translation baseline",
       policy_text: """
       Translate faithfully without omitting content. Preserve placeholders and inline markup.
@@ -74,7 +75,8 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
 
   defp maybe_add_title_policy(policies, title) when is_binary(title) do
     [
-      %{policy_key: "auto:title",
+      %{
+        policy_key: "auto:title",
         title: "Title translation",
         policy_text: """
         Book title: "#{title}"
@@ -108,7 +110,8 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
     }
 
     [
-      %{policy_key: "auto:toc",
+      %{
+        policy_key: "auto:toc",
         title: "Table of contents",
         policy_text: """
         Table of contents entries (translate consistently):
@@ -146,7 +149,8 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
         }
 
         [
-          %{policy_key: "auto:metadata",
+          %{
+            policy_key: "auto:metadata",
             title: "Metadata references",
             policy_text: """
             Metadata for reference (keep proper nouns consistent):
@@ -260,9 +264,7 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
   defp fetch_tree_metadata(_tree), do: %{}
 
   defp fetch_toc_paths(%DocumentTree{metadata: metadata}) when is_map(metadata) do
-    %{nav_path: map_get(metadata, :nav_path),
-      toc_ncx_path: map_get(metadata, :toc_ncx_path)
-    }
+    %{nav_path: map_get(metadata, :nav_path), toc_ncx_path: map_get(metadata, :toc_ncx_path)}
   end
 
   defp fetch_toc_paths(_tree), do: %{nav_path: nil, toc_ncx_path: nil}
@@ -271,7 +273,7 @@ defmodule DocCoffeeLite.Translation.PolicyGenerator do
 
   defp tree_reader(%DocumentTree{work_dir: work_dir}) do
     reader = fn path ->
-      with :ok <-EpubPath.validate_relative_path(path),
+      with :ok <- EpubPath.validate_relative_path(path),
            {:ok, full_path} <- EpubPath.safe_join(work_dir, path) do
         File.read(full_path)
       end

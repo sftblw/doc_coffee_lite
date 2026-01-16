@@ -4,7 +4,6 @@ defmodule DocCoffeeLiteWeb.HomeLive do
 
   alias DocCoffeeLite.Epub
   alias DocCoffeeLite.Translation
-  alias DocCoffeeLite.Translation.{Project, SourceDocument}
   alias DocCoffeeLite.Translation.Workers.ProjectPrepareWorker
   alias DocCoffeeLiteWeb.ProjectFormatter
 
@@ -52,6 +51,7 @@ defmodule DocCoffeeLiteWeb.HomeLive do
 
       {:error, reason} ->
         Logger.error("create_project failed: #{inspect(reason)}")
+
         {:noreply,
          socket
          |> clear_flash()
@@ -82,6 +82,7 @@ defmodule DocCoffeeLiteWeb.HomeLive do
           {:error, reason} = error ->
             Logger.error("Upload failed at step: #{inspect(reason)}")
             error
+
           error ->
             Logger.error("Upload failed unexpected: #{inspect(error)}")
             {:error, error}
@@ -90,10 +91,16 @@ defmodule DocCoffeeLiteWeb.HomeLive do
       {:ok, result}
     end)
     |> case do
-      [{:ok, project_id}] -> {:ok, project_id}
-      [{:error, reason}] -> {:error, reason}
-      [] -> {:error, :missing_upload}
-      other -> 
+      [{:ok, project_id}] ->
+        {:ok, project_id}
+
+      [{:error, reason}] ->
+        {:error, reason}
+
+      [] ->
+        {:error, :missing_upload}
+
+      other ->
         Logger.error("Unexpected consume_uploaded_entries result: #{inspect(other)}")
         {:error, {:unexpected_upload_result, other}}
     end
@@ -109,10 +116,21 @@ defmodule DocCoffeeLiteWeb.HomeLive do
     File.mkdir_p!(base)
 
     case File.ls(work_dir) do
-      {:error, :enoent} -> {:ok, work_dir}
-      {:ok, []} -> {:ok, work_dir}
-      {:ok, _} -> {:ok, Path.join(base, "upload-#{socket_id}-#{entry.uuid}-#{System.unique_integer([:positive])}")}
-      {:error, reason} -> {:error, reason}
+      {:error, :enoent} ->
+        {:ok, work_dir}
+
+      {:ok, []} ->
+        {:ok, work_dir}
+
+      {:ok, _} ->
+        {:ok,
+         Path.join(
+           base,
+           "upload-#{socket_id}-#{entry.uuid}-#{System.unique_integer([:positive])}"
+         )}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -190,10 +208,19 @@ defmodule DocCoffeeLiteWeb.HomeLive do
                     Pure Ecto version. No Ash overhead.
                   </p>
 
-                  <.form for={@form} id="new-project-form" phx-submit="create_project" phx-change="noop" class="mt-6 space-y-4">
+                  <.form
+                    for={@form}
+                    id="new-project-form"
+                    phx-submit="create_project"
+                    phx-change="noop"
+                    class="mt-6 space-y-4"
+                  >
                     <div class="space-y-2">
-                      <.live_file_input upload={@uploads.epub} class="w-full cursor-pointer rounded-2xl border-2 border-dashed border-stone-200 bg-white/80 p-8 text-sm text-stone-600" />
-                      
+                      <.live_file_input
+                        upload={@uploads.epub}
+                        class="w-full cursor-pointer rounded-2xl border-2 border-dashed border-stone-200 bg-white/80 p-8 text-sm text-stone-600"
+                      />
+
                       <%= for entry <- @uploads.epub.entries do %>
                         <div class="flex items-center justify-between gap-3 rounded-2xl border border-stone-200/70 bg-white/70 px-4 py-3 text-xs text-stone-600">
                           <span class="font-semibold text-stone-700">{entry.client_name}</span>
@@ -204,11 +231,22 @@ defmodule DocCoffeeLiteWeb.HomeLive do
 
                     <div class="flex flex-wrap items-center gap-3">
                       <div class="min-w-[220px]">
-                        <label class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-400">Target lang</label>
-                        <.input name="upload[target_lang]" type="text" value={@target_lang} class="mt-2 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm" />
+                        <label class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-400">
+                          Target lang
+                        </label>
+                        <.input
+                          name="upload[target_lang]"
+                          type="text"
+                          value={@target_lang}
+                          class="mt-2 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm"
+                        />
                       </div>
 
-                      <button type="submit" disabled={@uploads.epub.entries == []} class="mt-6 inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-white">
+                      <button
+                        type="submit"
+                        disabled={@uploads.epub.entries == []}
+                        class="mt-6 inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-white"
+                      >
                         Create project <.icon name="hero-plus" class="size-4" />
                       </button>
                     </div>
@@ -221,7 +259,10 @@ defmodule DocCoffeeLiteWeb.HomeLive do
               <div class="rounded-3xl border border-stone-200/80 bg-white/85 p-6 shadow-sm backdrop-blur">
                 <div class="flex items-center justify-between mb-5">
                   <h2 class="font-display text-xl">Recent projects</h2>
-                  <.link navigate={~p"/projects"} class="text-xs font-semibold uppercase tracking-wider text-stone-500 hover:text-stone-900">
+                  <.link
+                    navigate={~p"/projects"}
+                    class="text-xs font-semibold uppercase tracking-wider text-stone-500 hover:text-stone-900"
+                  >
                     View all
                   </.link>
                 </div>
@@ -231,14 +272,19 @@ defmodule DocCoffeeLiteWeb.HomeLive do
                       <div class="flex items-start justify-between gap-4">
                         <div>
                           <h3 class="text-base font-semibold text-stone-900">{project.title}</h3>
-                          <p class="mt-1 text-xs text-stone-500">{project.source} -> {project.target}</p>
+                          <p class="mt-1 text-xs text-stone-500">
+                            {project.source} -> {project.target}
+                          </p>
                         </div>
                         <span class={"inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold uppercase #{project.status_classes}"}>
                           {project.status_label}
                         </span>
                       </div>
                       <div class="mt-4 flex items-center justify-end gap-2">
-                        <.link navigate={~p"/projects/#{project.id}"} class="rounded-full border border-stone-200 bg-white px-3 py-1 text-xs font-semibold uppercase">
+                        <.link
+                          navigate={~p"/projects/#{project.id}"}
+                          class="rounded-full border border-stone-200 bg-white px-3 py-1 text-xs font-semibold uppercase"
+                        >
                           Details
                         </.link>
                       </div>

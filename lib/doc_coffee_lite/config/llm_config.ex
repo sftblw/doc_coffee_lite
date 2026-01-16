@@ -13,7 +13,7 @@ defmodule DocCoffeeLite.Config.LlmConfig do
     field :model, :string
     field :tier, :string
     field :usage_type, :string
-    
+
     belongs_to :project, DocCoffeeLite.Translation.Project
 
     timestamps(type: :utc_datetime)
@@ -22,7 +22,29 @@ defmodule DocCoffeeLite.Config.LlmConfig do
   @doc false
   def changeset(llm_config, attrs) do
     llm_config
-    |> cast(attrs, [:project_id, :name, :usage_type, :tier, :provider, :model, :base_url, :api_key, :settings, :active, :fallback])
-    |> validate_required([:name, :usage_type, :tier, :provider, :model, :base_url, :api_key, :active, :fallback])
+    |> cast(attrs, [
+      :project_id,
+      :name,
+      :usage_type,
+      :tier,
+      :provider,
+      :model,
+      :base_url,
+      :api_key,
+      :settings,
+      :active,
+      :fallback
+    ])
+    |> validate_required([
+      :name,
+      :usage_type,
+      :tier,
+      :provider,
+      :model,
+      :base_url,
+      :api_key,
+      :active,
+      :fallback
+    ])
   end
 end

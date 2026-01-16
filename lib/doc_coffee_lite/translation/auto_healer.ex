@@ -24,7 +24,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   end
 
   @type opt ::
-          {:max_insert_ratio, float()} 
+          {:max_insert_ratio, float()}
           | {:fail_if_no_anchor, boolean()}
 
   @default_max_insert_ratio 0.70
@@ -54,10 +54,10 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     src_tokens = tokenize_strict(src)
 
     with :ok <- validate_well_formed(src_tokens) do
-      expected = src_tokens
       dst_tokens = tokenize_lenient(dst_trimmed)
+      expected = reorder_expected_tokens(src_tokens, dst_tokens)
 
-      {healed_core, stats} = 
+      {healed_core, stats} =
         rebuild_from_skeleton(expected, dst_trimmed, dst_tokens)
 
       expected_count = length(expected)
@@ -93,17 +93,119 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
   # Skeleton rebuild
   # -------------------------
 
+  defp reorder_expected_tokens(src_tokens, dst_tokens) do
+    dst_anchors = anchor_index_map(dst_tokens)
+
+    src_tokens
+    |> build_tag_tree()
+    |> reorder_tree(dst_anchors)
+    |> flatten_tree_tokens()
+  end
+
+  defp anchor_index_map(tokens) do
+    tokens
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn {tok, idx}, acc ->
+      Map.put_new(acc, {tok.tag, tok.num}, idx)
+    end)
+  end
+
+  defp build_tag_tree(tokens) do
+    root = %{id: :root, open: nil, close: nil, self: nil, children: []}
+
+    stack =
+      Enum.reduce(tokens, [root], fn tok, stack ->
+        case tok.kind do
+          :open ->
+            node = %{id: {tok.tag, tok.num}, open: tok, close: nil, self: nil, children: []}
+            [node | stack]
+
+          :self ->
+            node = %{id: {tok.tag, tok.num}, open: nil, close: nil, self: tok, children: []}
+            add_child(stack, node)
+
+          :close ->
+            [node | rest] = stack
+            node = %{node | close: tok}
+            add_child(rest, node)
+        end
+      end)
+
+    case stack do
+      [root_done] -> root_done
+      [root_done | _] -> root_done
+    end
+  end
+
+  defp add_child([parent | rest], child) do
+    updated = %{parent | children: parent.children ++ [child]}
+    [updated | rest]
+  end
+
+  defp reorder_tree(node, anchor_map) do
+    reordered_children =
+      node.children
+      |> reorder_children(anchor_map)
+      |> Enum.map(&reorder_tree(&1, anchor_map))
+
+    %{node | children: reordered_children}
+  end
+
+  defp reorder_children(children, anchor_map) do
+    anchored =
+      children
+      |> Enum.filter(&anchored_child?(&1, anchor_map))
+      |> Enum.sort_by(&anchor_index(&1, anchor_map))
+
+    {reordered, _} =
+      Enum.map_reduce(children, anchored, fn child, queue ->
+        if anchored_child?(child, anchor_map) do
+          [next | rest] = queue
+          {next, rest}
+        else
+          {child, queue}
+        end
+      end)
+
+    reordered
+  end
+
+  defp anchored_child?(%{id: id}, anchor_map), do: Map.has_key?(anchor_map, id)
+  defp anchor_index(%{id: id}, anchor_map), do: Map.get(anchor_map, id)
+
+  defp flatten_tree_tokens(node) do
+    node.children
+    |> Enum.flat_map(&node_tokens/1)
+  end
+
+  defp node_tokens(%{self: %Token{} = tok}), do: [tok]
+
+  defp node_tokens(%{open: %Token{} = open, close: %Token{} = close, children: children}) do
+    [open | Enum.flat_map(children, &node_tokens/1)] ++ [close]
+  end
+
   defp rebuild_from_skeleton(expected_tokens, dst_bin, dst_tokens) do
     tokens = List.to_tuple(dst_tokens)
     n = tuple_size(tokens)
 
     # deferred: list of raw closing tags that were missing and need to be appended after text
-    {out_rev, pos, j, stats, deferred} = 
-      apply_expected(expected_tokens, expected_tokens |> tl_or_empty(), dst_bin, tokens, n, 0, 0, [], %{
-        matched: 0,
-        inserted: 0,
-        dropped: 0
-      }, [])
+    {out_rev, pos, j, stats, deferred} =
+      apply_expected(
+        expected_tokens,
+        expected_tokens |> tl_or_empty(),
+        dst_bin,
+        tokens,
+        n,
+        0,
+        0,
+        [],
+        %{
+          matched: 0,
+          inserted: 0,
+          dropped: 0
+        },
+        []
+      )
 
     # drop remaining dst tag tokens, keep text
     {out_rev2, pos2, _j2, stats2} = drop_rest(dst_bin, tokens, n, pos, j, out_rev, stats)
@@ -111,19 +213,19 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
     # append remaining text, THEN append deferred closing tags
     tail_text = slice(dst_bin, pos2, byte_size(dst_bin))
     final_rev = deferred ++ [tail_text | out_rev2]
-    
+
     out = Enum.reverse(final_rev) |> IO.iodata_to_binary()
 
     {out, stats2}
   end
 
-  defp apply_expected([], _tails, _dst, _tokens, _n, pos, j, out_rev, stats, deferred), 
+  defp apply_expected([], _tails, _dst, _tokens, _n, pos, j, out_rev, stats, deferred),
     do: {out_rev, pos, j, stats, deferred}
 
   defp apply_expected([exp | rest], tails, dst, tokens, n, pos, j, out_rev, stats, deferred) do
     tail_expected = tl_or_empty(tails)
 
-    chosen = 
+    chosen =
       choose_match_index(exp, tail_expected, tokens, n, j)
 
     case chosen do
@@ -146,7 +248,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
         else
           # Open/Self tag missing: Flush deferred, then insert this tag
           out_rev_flushed = [exp.raw | deferred ++ out_rev]
-          
+
           apply_expected(
             rest,
             tail_expected,
@@ -167,7 +269,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
         {out_rev1, pos1, _j1, stats1} = drop_until(dst, tokens, pos, j, k, out_rev, stats)
 
         tok = elem(tokens, k)
-        
+
         # keep text before matched token, then flush deferred, then insert exp.raw
         pre_text = slice(dst, pos1, tok.start)
         out_rev2 = [exp.raw | deferred ++ [pre_text | out_rev1]]
@@ -270,7 +372,9 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
 
   defp validate_well_formed(tokens) do
     case do_validate(tokens, []) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, reason} ->
         {:error,
          %HealError{
@@ -352,7 +456,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
       end
 
     with {:ok, tag, j2} <- read_name(bin, len, j),
-         true <- j2 < len and :binary.at(bin, j2) == ?_ or :error,
+         true <- (j2 < len and :binary.at(bin, j2) == ?_) or :error,
          {:ok, num, j3} <- read_digits(bin, len, j2 + 1),
          {is_self, j4} <- read_optional_self_slash(bin, len, j3),
          true <- not (is_close and is_self) or :error,
@@ -388,7 +492,7 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
 
     j2 =
       advance_while(bin, len, j, fn b ->
-        (b >= ?a and b <= ?z) or (b >= ?A and b <= ?Z) or (b >= ?0 and b <= ?9) or b in [?:, ?-] 
+        (b >= ?a and b <= ?z) or (b >= ?A and b <= ?Z) or (b >= ?0 and b <= ?9) or b in [?:, ?-]
       end)
 
     if j2 > start do
@@ -426,7 +530,8 @@ defmodule DocCoffeeLite.Translation.AutoHealer do
       open_len == 2 and mode == :lenient and j < len and :binary.at(bin, j) == ?] ->
         {:ok, :broken_right, 1}
 
-      open_len == 1 and mode == :lenient and j + 1 < len and :binary.at(bin, j) == ?] and :binary.at(bin, j + 1) == ?] ->
+      open_len == 1 and mode == :lenient and j + 1 < len and :binary.at(bin, j) == ?] and
+          :binary.at(bin, j + 1) == ?] ->
         {:ok, :broken_left, 2}
 
       true ->

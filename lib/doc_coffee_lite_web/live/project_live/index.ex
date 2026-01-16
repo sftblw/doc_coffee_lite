@@ -39,9 +39,12 @@ defmodule DocCoffeeLiteWeb.ProjectLive.Index do
             </div>
           </div>
           <div class="flex items-center gap-4">
-             <.link navigate={~p"/"} class="rounded-full border border-stone-200 bg-white/80 px-4 py-2 text-xs font-semibold uppercase tracking-wider backdrop-blur hover:bg-white">
-               Home
-             </.link>
+            <.link
+              navigate={~p"/"}
+              class="rounded-full border border-stone-200 bg-white/80 px-4 py-2 text-xs font-semibold uppercase tracking-wider backdrop-blur hover:bg-white"
+            >
+              Home
+            </.link>
           </div>
         </header>
 
@@ -65,19 +68,25 @@ defmodule DocCoffeeLiteWeb.ProjectLive.Index do
                       {project.status_label}
                     </span>
                   </div>
-                  
+
                   <div class="mt-4">
                     <div class="flex items-center justify-between text-xs text-stone-500">
                       <span>Progress</span>
                       <span>{project.progress}%</span>
                     </div>
                     <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
-                      <div class="h-full rounded-full bg-stone-900 transition-all duration-500" style={"width: #{project.progress}%"} />
+                      <div
+                        class="h-full rounded-full bg-stone-900 transition-all duration-500"
+                        style={"width: #{project.progress}%"}
+                      />
                     </div>
                   </div>
 
                   <div class="mt-6 flex items-center justify-end gap-2">
-                    <.link navigate={~p"/projects/#{project.id}"} class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase hover:bg-stone-50">
+                    <.link
+                      navigate={~p"/projects/#{project.id}"}
+                      class="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-semibold uppercase hover:bg-stone-50"
+                    >
                       View Details
                     </.link>
                   </div>

@@ -14,7 +14,8 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
   @type config :: map()
 
-  @spec translate(config(), String.t(), keyword()) :: {:ok, map() | String.t(), String.t() | nil, map()} | {:error, term()}
+  @spec translate(config(), String.t(), keyword()) ::
+          {:ok, map() | String.t(), String.t() | nil, map()} | {:error, term()}
   def translate(config, source, opts \\ []) when is_map(config) and is_binary(source) do
     usage_type = Keyword.get(opts, :usage_type, :translate)
     target_lang = Keyword.get(opts, :target_lang, "Korean")
@@ -28,19 +29,19 @@ defmodule DocCoffeeLite.Translation.LlmClient do
       initial_messages = [
         Message.new_system!(
           "# ROLE\nYou are a specialized translation engine.\n\n" <>
-          "# TASK\nTranslate the provided text units into the target language: '#{target_lang}'.\n\n" <>
-          "# CONSTRAINTS\n" <>
-          "1. Output ONLY a valid JSON object.\n" <>
-          "2. 'translations': An array of strings. Each string MUST be the full translated unit with its original semantic tags (e.g., [[p_1]]...[[/p_1]]).\n" <>
-          "3. 'context_summary': A brief one-sentence summary of the story/content so far to help the next translation batch.\n" <>
-          "4. Do not include any explanations.\n\n" <>
-          "# EXAMPLE\n" <>
-          "Output: {\"translations\": [\"[[p_1]]...[[/p_1]]\"], \"context_summary\": \"The character has just arrived at the mysterious castle.\"}"
+            "# TASK\nTranslate the provided text units into the target language: '#{target_lang}'.\n\n" <>
+            "# CONSTRAINTS\n" <>
+            "1. Output ONLY a valid JSON object.\n" <>
+            "2. 'translations': An array of strings. Each string MUST be the full translated unit with its original semantic tags (e.g., [[p_1]]...[[/p_1]]).\n" <>
+            "3. 'context_summary': A brief one-sentence summary of the story/content so far to help the next translation batch.\n" <>
+            "4. Do not include any explanations.\n\n" <>
+            "# EXAMPLE\n" <>
+            "Output: {\"translations\": [\"[[p_1]]...[[/p_1]]\"], \"context_summary\": \"The character has just arrived at the mysterious castle.\"}"
         ),
         Message.new_user!(
-          (if prev_context, do: "**Previous Context Summary**: #{prev_context}\n\n", else: "") <>
-          "**Target Language Code**: #{target_lang}\n\n" <>
-          "**Units to translate into #{target_lang}**:\n#{source}"
+          if(prev_context, do: "**Previous Context Summary**: #{prev_context}\n\n", else: "") <>
+            "**Target Language Code**: #{target_lang}\n\n" <>
+            "**Units to translate into #{target_lang}**:\n#{source}"
         )
       ]
 
@@ -59,15 +60,24 @@ defmodule DocCoffeeLite.Translation.LlmClient do
             {:ok, data, summary, serialize_response(response)}
 
           {:error, feedback} when retries_left > 0 ->
-            Logger.warning("Translation validation failed. Retries left: #{retries_left}. Feedback: #{feedback}")
-            new_messages = messages ++ [
-              Message.new_assistant!(content_text),
-              Message.new_user!("Your previous response had errors: #{feedback}. Please correct them and return the full JSON object again.")
-            ]
+            Logger.warning(
+              "Translation validation failed. Retries left: #{retries_left}. Feedback: #{feedback}"
+            )
+
+            new_messages =
+              messages ++
+                [
+                  Message.new_assistant!(content_text),
+                  Message.new_user!(
+                    "Your previous response had errors: #{feedback}. Please correct them and return the full JSON object again."
+                  )
+                ]
+
             run_translation_loop(llm, new_messages, expected_keys, retries_left - 1, url)
 
           {:error, _feedback} ->
             if url, do: LlmPool.checkin(url)
+
             case parse_best_effort(content_text) do
               {:ok, data, summary} -> {:ok, data, summary, serialize_response(response)}
               _ -> {:ok, content_text, nil, serialize_response(response)}
@@ -92,13 +102,15 @@ defmodule DocCoffeeLite.Translation.LlmClient do
             {:error, "Expected #{length(expected_keys)} units, but got #{length(list)}."}
 
           missing_keys != [] ->
-            {:error, "The following tags are missing or malformed: #{Enum.join(missing_keys, ", ")}."}
+            {:error,
+             "The following tags are missing or malformed: #{Enum.join(missing_keys, ", ")}."}
 
           true ->
             {:ok, parsed, summary}
         end
 
-      _ -> {:error, "Invalid JSON format or missing 'translations' key."}
+      _ ->
+        {:error, "Invalid JSON format or missing 'translations' key."}
     end
   end
 
@@ -114,24 +126,13 @@ defmodule DocCoffeeLite.Translation.LlmClient do
 
   defp parse_best_effort(text) do
     case Jason.decode(text) do
-      {:ok, %{"translations" => list} = json} when is_list(list) -> 
+      {:ok, %{"translations" => list} = json} when is_list(list) ->
         {:ok, parse_tagged_list(list), Map.get(json, "context_summary")}
-      _ -> :error
+
+      _ ->
+        :error
     end
   end
-
-  defp extract_val(%{"translated_text" => t}), do: t
-  defp extract_val(%{"translation" => t}), do: t
-  defp extract_val(%{"text" => t}), do: t
-  defp extract_val(%{} = map) do
-    # Fallback: if it's a map, try to find any string value that looks like a translation
-    Enum.find_value(map, fn
-      {_k, v} when is_binary(v) and v != "" -> v
-      _ -> nil
-    end) || inspect(map)
-  end
-  defp extract_val(v) when is_binary(v), do: v
-  defp extract_val(v), do: inspect(v)
 
   defp translations_schema_payload do
     %{

@@ -129,7 +129,7 @@ defmodule DocCoffeeLite.Epub.Reader do
          {:ok, doc} <- parse_xml(xml),
          rootfile_path when is_binary(rootfile_path) <- find_rootfile_path(doc),
          rootfile_path <- String.trim(rootfile_path),
-         :ok <-EpubPath.validate_relative_path(rootfile_path) do
+         :ok <- EpubPath.validate_relative_path(rootfile_path) do
       {:ok, rootfile_path}
     else
       nil -> {:error, :missing_rootfile}
@@ -154,7 +154,6 @@ defmodule DocCoffeeLite.Epub.Reader do
          {:ok, manifest} <- parse_manifest(doc, rootfile_dir),
          {:ok, {spine, spine_toc_id}} <- parse_spine(doc),
          {:ok, spine_items} <- resolve_spine_items(manifest, spine) do
-      
       version = doc |> Floki.find("package") |> Floki.attribute("version") |> List.first()
       metadata = parse_metadata(doc)
       nav_path = find_nav_path(manifest)

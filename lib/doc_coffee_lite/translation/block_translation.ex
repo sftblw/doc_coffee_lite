@@ -10,7 +10,7 @@ defmodule DocCoffeeLite.Translation.BlockTranslation do
     field :metrics, :map, default: %{}
     field :translated_markup, :string
     field :translated_text, :string
-    
+
     belongs_to :translation_run, DocCoffeeLite.Translation.TranslationRun
     belongs_to :translation_unit, DocCoffeeLite.Translation.TranslationUnit
 
@@ -20,7 +20,17 @@ defmodule DocCoffeeLite.Translation.BlockTranslation do
   @doc false
   def changeset(block_translation, attrs) do
     block_translation
-    |> cast(attrs, [:translation_run_id, :translation_unit_id, :status, :translated_text, :translated_markup, :placeholders, :llm_response, :metrics, :metadata])
+    |> cast(attrs, [
+      :translation_run_id,
+      :translation_unit_id,
+      :status,
+      :translated_text,
+      :translated_markup,
+      :placeholders,
+      :llm_response,
+      :metrics,
+      :metadata
+    ])
     |> validate_required([:status])
   end
 end

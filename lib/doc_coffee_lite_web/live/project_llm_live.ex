@@ -25,6 +25,7 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
       {:ok, project} ->
         configs = load_configs(project.id)
         {:ok, socket |> assign(:project, project) |> assign(:configs, configs)}
+
       _ ->
         {:ok, socket |> put_flash(:error, "Project not found") |> push_navigate(to: ~p"/")}
     end
@@ -33,6 +34,7 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
   @impl true
   def handle_event("save", %{"config" => params}, socket) do
     project = socket.assigns.project
+
     with {:ok, usage_type} <- fetch_atom(params, "usage_type"),
          {:ok, tier} <- fetch_atom(params, "tier"),
          {:ok, config} <- upsert_config(project.id, usage_type, tier, params) do
@@ -45,9 +47,13 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
 
   def handle_event("preview_snapshot", _params, socket) do
     project = socket.assigns.project
+
     case LlmSelector.snapshot(project.id, allow_missing?: true) do
-      {:ok, snapshot} -> {:noreply, assign(socket, :snapshot, snapshot)}
-      {:error, reason} -> {:noreply, put_flash(socket, :error, "Snapshot failed: #{inspect(reason)}")}
+      {:ok, snapshot} ->
+        {:noreply, assign(socket, :snapshot, snapshot)}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Snapshot failed: #{inspect(reason)}")}
     end
   end
 
@@ -60,7 +66,12 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
           <h1 class="text-3xl font-display">LLM Settings</h1>
           <p class="text-stone-600">Configure models for project {@project && @project.title}</p>
         </div>
-        <.link navigate={~p"/projects/#{@project && @project.id}"} class="border px-4 py-2 rounded-full">Back</.link>
+        <.link
+          navigate={~p"/projects/#{@project && @project.id}"}
+          class="border px-4 py-2 rounded-full"
+        >
+          Back
+        </.link>
       </header>
 
       <div class="grid gap-6">
@@ -69,7 +80,11 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
             <h2 class="text-xl font-semibold mb-4">{String.capitalize(to_string(usage_type))}</h2>
             <div class="grid sm:grid-cols-2 gap-4">
               <%= for tier <- @tiers do %>
-                <.config_form usage_type={usage_type} tier={tier} config={Map.get(@configs, {usage_type, tier})} />
+                <.config_form
+                  usage_type={usage_type}
+                  tier={tier}
+                  config={Map.get(@configs, {usage_type, tier})}
+                />
               <% end %>
             </div>
           </div>
@@ -92,7 +107,9 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
         <.input name="config[base_url]" label="Base URL" value={@config && @config.base_url} />
         <.input name="config[api_key]" label="API Key" value={@config && @config.api_key} />
       </div>
-      <button type="submit" class="mt-4 w-full bg-stone-900 text-white py-2 rounded-lg text-sm">Save</button>
+      <button type="submit" class="mt-4 w-full bg-stone-900 text-white py-2 rounded-lg text-sm">
+        Save
+      </button>
     </form>
     """
   end
@@ -106,15 +123,22 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
 
   defp load_configs(project_id) do
     Repo.all(from c in LlmConfig, where: c.project_id == ^project_id and c.active == true)
-    |> Enum.reduce(%{}, fn c, acc -> Map.put(acc, {String.to_existing_atom(c.usage_type), String.to_existing_atom(c.tier)}, c) end)
+    |> Enum.reduce(%{}, fn c, acc ->
+      Map.put(acc, {String.to_existing_atom(c.usage_type), String.to_existing_atom(c.tier)}, c)
+    end)
   end
 
   defp upsert_config(project_id, usage_type, tier, params) do
     usage_type_s = to_string(usage_type)
     tier_s = to_string(tier)
-    
-    existing = Repo.one(from c in LlmConfig, where: c.project_id == ^project_id and c.usage_type == ^usage_type_s and c.tier == ^tier_s)
-    
+
+    existing =
+      Repo.one(
+        from c in LlmConfig,
+          where:
+            c.project_id == ^project_id and c.usage_type == ^usage_type_s and c.tier == ^tier_s
+      )
+
     attrs = %{
       project_id: project_id,
       usage_type: usage_type_s,

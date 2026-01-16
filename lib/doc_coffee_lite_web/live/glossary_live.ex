@@ -26,6 +26,7 @@ defmodule DocCoffeeLiteWeb.GlossaryLive do
       {:ok, project} ->
         socket = socket |> assign(:project, project) |> load_terms()
         {:ok, socket}
+
       _ ->
         {:ok, socket |> put_flash(:error, "Project not found") |> push_navigate(to: ~p"/")}
     end
@@ -40,6 +41,7 @@ defmodule DocCoffeeLiteWeb.GlossaryLive do
   def handle_event("save-term", %{"term" => params}, socket) do
     id = params["id"]
     term = Repo.get!(GlossaryTerm, id)
+
     case Repo.update(GlossaryTerm.changeset(term, params)) do
       {:ok, _} -> {:noreply, load_terms(socket)}
       {:error, _} -> {:noreply, put_flash(socket, :error, "Failed to save term")}
@@ -48,6 +50,7 @@ defmodule DocCoffeeLiteWeb.GlossaryLive do
 
   def handle_event("set-status", %{"id" => id, "status" => status}, socket) do
     term = Repo.get!(GlossaryTerm, id)
+
     case Repo.update(GlossaryTerm.changeset(term, %{status: status})) do
       {:ok, _} -> {:noreply, load_terms(socket)}
       {:error, _} -> {:noreply, put_flash(socket, :error, "Failed to update status")}
@@ -63,20 +66,26 @@ defmodule DocCoffeeLiteWeb.GlossaryLive do
           <h1 class="text-3xl font-display">Glossary: {@project && @project.title}</h1>
           <p class="text-stone-600">Curate terms for consistent translation.</p>
         </div>
-        <.link navigate={~p"/projects/#{@project_id}"} class="border px-4 py-2 rounded-full">Back</.link>
+        <.link navigate={~p"/projects/#{@project_id}"} class="border px-4 py-2 rounded-full">
+          Back
+        </.link>
       </header>
 
       <section class="bg-white p-6 rounded-2xl border shadow-sm mb-8">
         <.form for={%{}} as={:filters} phx-change="filter" class="flex gap-4">
           <div class="flex-1">
             <label class="block text-xs font-semibold uppercase text-stone-400">Search</label>
-            <input name="filters[query]" value={@filters.query} class="w-full mt-1 border rounded-lg px-3 py-2" />
+            <input
+              name="filters[query]"
+              value={@filters.query}
+              class="w-full mt-1 border rounded-lg px-3 py-2"
+            />
           </div>
           <div class="w-48">
             <label class="block text-xs font-semibold uppercase text-stone-400">Status</label>
             <select name="filters[status]" class="w-full mt-1 border rounded-lg px-3 py-2">
               <option value="all">All</option>
-              <%= Phoenix.HTML.Form.options_for_select(@status_options, @filters.status) %>
+              {Phoenix.HTML.Form.options_for_select(@status_options, @filters.status)}
             </select>
           </div>
         </.form>
@@ -92,10 +101,27 @@ defmodule DocCoffeeLiteWeb.GlossaryLive do
             <div class="flex gap-2">
               <form phx-submit="save-term" class="flex gap-2">
                 <input type="hidden" name="term[id]" value={term.id} />
-                <input name="term[target_text]" value={term.target_text} placeholder="Translation" class="border rounded-lg px-3 py-1 text-sm" />
-                <button type="submit" class="bg-stone-900 text-white px-3 py-1 rounded-lg text-sm font-semibold">Save</button>
+                <input
+                  name="term[target_text]"
+                  value={term.target_text}
+                  placeholder="Translation"
+                  class="border rounded-lg px-3 py-1 text-sm"
+                />
+                <button
+                  type="submit"
+                  class="bg-stone-900 text-white px-3 py-1 rounded-lg text-sm font-semibold"
+                >
+                  Save
+                </button>
               </form>
-              <button phx-click="set-status" phx-value-id={term.id} phx-value-status="approved" class="border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-lg text-sm font-semibold">Approve</button>
+              <button
+                phx-click="set-status"
+                phx-value-id={term.id}
+                phx-value-status="approved"
+                class="border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-lg text-sm font-semibold"
+              >
+                Approve
+              </button>
             </div>
           </div>
         <% end %>
@@ -114,12 +140,21 @@ defmodule DocCoffeeLiteWeb.GlossaryLive do
   defp load_terms(socket) do
     project_id = socket.assigns.project_id
     filters = socket.assigns.filters
-    
+
     query = from g in GlossaryTerm, where: g.project_id == ^project_id
-    query = if filters.status != "all", do: from(g in query, where: g.status == ^filters.status), else: query
-    query = if filters.query != "", do: from(g in query, where: ilike(g.source_text, ^"%#{filters.query}%")), else: query
+
+    query =
+      if filters.status != "all",
+        do: from(g in query, where: g.status == ^filters.status),
+        else: query
+
+    query =
+      if filters.query != "",
+        do: from(g in query, where: ilike(g.source_text, ^"%#{filters.query}%")),
+        else: query
+
     query = from g in query, order_by: [desc: g.usage_count]
-    
+
     terms = Repo.all(query)
     assign(socket, :terms, terms)
   end

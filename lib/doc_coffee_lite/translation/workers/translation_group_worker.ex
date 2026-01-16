@@ -31,21 +31,20 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
     with {:ok, run, group, project} <- load_state(run_id, group_id),
          {:ok, group} <- ensure_active(run, group, project) do
-      
       # 2. Ensure group is marked as running
       {:ok, group} = ensure_group_running(group)
-      
+
       # 3. Fetch candidates (we fetch max_units to try and batch them)
       units = fetch_units(group, max_units)
       num_units = length(units)
-      
+
       if num_units == 0 do
         finalize_group(group)
       else
         # 4. Form a "True Batch" based on char limits
         {batch_to_process, _remaining} = build_sub_batch(units, max_chars)
         Logger.info("[Batch] Processing #{length(batch_to_process)} units for group #{group.id}")
-        
+
         # 5. Process the batch in one go
         case process_true_batch(run, group, batch_to_process, strategy, project) do
           :ok ->
@@ -69,7 +68,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     else
       {:pause, _group} ->
         {:snooze, @pause_snooze_seconds}
-      
+
       {:error, :not_found} ->
         :ok
     end
@@ -79,13 +78,16 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     Enum.reduce_while(units, {[], 0}, fn unit, {acc, current_chars} ->
       unit_len = String.length(unit.source_text || "")
       new_total = current_chars + unit_len
-      
+
       cond do
-        acc == [] -> # Always include at least one unit
+        # Always include at least one unit
+        acc == [] ->
           {:cont, {[unit], unit_len}}
-        new_total <= max_chars -> 
+
+        new_total <= max_chars ->
           {:cont, {acc ++ [unit], new_total}}
-        true -> 
+
+        true ->
           {:halt, {acc, current_chars}}
       end
     end)
@@ -97,8 +99,8 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     Enum.each(units, &set_unit_status(&1, "translating"))
 
     # 2. Combine sources: [[p_1]]Source[[/p_1]]\n[[p_2]]... 
-    combined_source = 
-      units 
+    combined_source =
+      units
       |> Enum.map(fn u -> "[[#{u.unit_key}]]#{u.source_text}[[/#{u.unit_key}]]" end)
       |> Enum.join("\n")
 
@@ -107,9 +109,12 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     prev_context = group.context_summary
 
     # 3. Call LLM once with previous context
-    case LlmClient.translate(run.llm_config_snapshot, combined_source, 
-           usage_type: :translate, target_lang: target_lang, 
-           expected_keys: expected_keys, prev_context: prev_context) do
+    case LlmClient.translate(run.llm_config_snapshot, combined_source,
+           usage_type: :translate,
+           target_lang: target_lang,
+           expected_keys: expected_keys,
+           prev_context: prev_context
+         ) do
       {:ok, result, new_summary, llm_response} ->
         # 4. Update the group with the NEW context summary for the next batch
         if new_summary do
@@ -119,18 +124,31 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
         # 5. Parse and save each unit
         Enum.each(units, fn unit ->
           # Result can be a map (structured) or a string (raw blob)
-          translated_text = 
+          translated_text =
             case result do
-              %{} = map -> Map.get(map, unit.unit_key) || unit.source_text
-              blob when is_binary(blob) -> extract_unit_content(blob, unit.unit_key) || unit.source_text
+              %{} = map ->
+                Map.get(map, unit.unit_key) || unit.source_text
+
+              blob when is_binary(blob) ->
+                extract_unit_content(blob, unit.unit_key) || unit.source_text
             end
 
-          translated_markup = DocCoffeeLite.Translation.Placeholder.restore(translated_text, unit.placeholders || %{})
-          
-          save_translation_result(run, unit, {translated_text, translated_markup, llm_response}, "llm")
+          translated_markup =
+            DocCoffeeLite.Translation.Placeholder.restore(
+              translated_text,
+              unit.placeholders || %{}
+            )
+
+          save_translation_result(
+            run,
+            unit,
+            {translated_text, translated_markup, llm_response},
+            "llm"
+          )
+
           set_unit_status(unit, "translated")
         end)
-        
+
         DocCoffeeLite.Translation.update_project_progress(run.project_id)
         :ok
 
@@ -147,6 +165,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       save_translation_result(run, unit, translation_result, "noop")
       set_unit_status(unit, "translated")
     end)
+
     DocCoffeeLite.Translation.update_project_progress(run.project_id)
     :ok
   end
@@ -155,7 +174,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     escaped_key = Regex.escape(unit_key)
     # The pattern matches exactly from [[key]] to [[/key]]
     pattern = "\\[\\[#{escaped_key}\\]\\](.*?)\\[\\[\\/#{escaped_key}\\]\\]"
-    
+
     case Regex.run(Regex.compile!(pattern, "s"), blob) do
       [_, content] -> String.trim(content)
       _ -> nil
@@ -163,8 +182,10 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   end
 
   defp has_more_units?(group_id) do
-    Repo.exists?(from u in TranslationUnit, 
-      where: u.translation_group_id == ^group_id and u.status in ^@pending_statuses)
+    Repo.exists?(
+      from u in TranslationUnit,
+        where: u.translation_group_id == ^group_id and u.status in ^@pending_statuses
+    )
   end
 
   defp save_translation_result(run, unit, {text, _markup_ignored, resp}, strategy) do
@@ -176,9 +197,10 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       end
 
     # 2. Restore placeholders using the HEALED text
-    translated_markup = DocCoffeeLite.Translation.Placeholder.restore(healed_text, unit.placeholders || %{})
+    translated_markup =
+      DocCoffeeLite.Translation.Placeholder.restore(healed_text, unit.placeholders || %{})
 
-    sanitized_resp = 
+    sanitized_resp =
       case resp do
         %{"raw" => raw} when is_binary(raw) -> %{"raw_summary" => String.slice(raw, 0, 1000)}
         %{} = map -> Map.take(map, ["role", "content", "status", "usage"])
@@ -194,7 +216,11 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
       placeholders: unit.placeholders || %{},
       llm_response: sanitized_resp,
       metrics: %{},
-      metadata: %{"strategy" => strategy, "source_hash" => unit.source_hash, "healing_status" => healing_status}
+      metadata: %{
+        "strategy" => strategy,
+        "source_hash" => unit.source_hash,
+        "healing_status" => healing_status
+      }
     }
 
     try do
@@ -214,7 +240,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   defp load_state(run_id, group_id) do
     run = Repo.get(TranslationRun, run_id)
     group = Repo.get(TranslationGroup, group_id)
-    
+
     if run && group && run.project_id == group.project_id do
       project = Repo.get(Project, group.project_id)
       {:ok, run, group, project}
@@ -225,11 +251,15 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
   defp fetch_units(group, batch_size) do
     cursor = group.cursor || 0
-    query = from u in TranslationUnit,
-      where: u.translation_group_id == ^group.id and u.position >= ^cursor and u.status in ^@pending_statuses,
-      order_by: [asc: u.position],
-      limit: ^batch_size
-      
+
+    query =
+      from u in TranslationUnit,
+        where:
+          u.translation_group_id == ^group.id and u.position >= ^cursor and
+            u.status in ^@pending_statuses,
+        order_by: [asc: u.position],
+        limit: ^batch_size
+
     Repo.all(query)
   end
 
@@ -271,16 +301,18 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   end
 
   defp update_group(group, attrs) do
-    {1, _} = from(g in TranslationGroup, where: g.id == ^group.id)
-             |> Repo.update_all(set: Keyword.new(attrs) |> Keyword.put(:updated_at, DateTime.utc_now()))
+    {1, _} =
+      from(g in TranslationGroup, where: g.id == ^group.id)
+      |> Repo.update_all(set: Keyword.new(attrs) |> Keyword.put(:updated_at, DateTime.utc_now()))
+
     {:ok, Map.merge(group, attrs)}
   end
 
   defp set_unit_status(unit, status) do
-    {1, _} = from(u in TranslationUnit, where: u.id == ^unit.id)
-             |> Repo.update_all(set: [status: status, updated_at: DateTime.utc_now()])
+    {1, _} =
+      from(u in TranslationUnit, where: u.id == ^unit.id)
+      |> Repo.update_all(set: [status: status, updated_at: DateTime.utc_now()])
+
     {:ok, %{unit | status: status}}
   end
-
-
 end

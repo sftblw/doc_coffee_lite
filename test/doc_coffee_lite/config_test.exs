@@ -8,7 +8,18 @@ defmodule DocCoffeeLite.ConfigTest do
 
     import DocCoffeeLite.ConfigFixtures
 
-    @invalid_attrs %{active: nil, name: nil, fallback: nil, api_key: nil, provider: nil, usage_type: nil, tier: nil, model: nil, base_url: nil, settings: nil}
+    @invalid_attrs %{
+      active: nil,
+      name: nil,
+      fallback: nil,
+      api_key: nil,
+      provider: nil,
+      usage_type: nil,
+      tier: nil,
+      model: nil,
+      base_url: nil,
+      settings: nil
+    }
 
     test "list_llm_configs/0 returns all llm_configs" do
       llm_config = llm_config_fixture()
@@ -21,7 +32,18 @@ defmodule DocCoffeeLite.ConfigTest do
     end
 
     test "create_llm_config/1 with valid data creates a llm_config" do
-      valid_attrs = %{active: true, name: "some name", fallback: true, api_key: "some api_key", provider: "some provider", usage_type: "some usage_type", tier: "some tier", model: "some model", base_url: "some base_url", settings: %{}}
+      valid_attrs = %{
+        active: true,
+        name: "some name",
+        fallback: true,
+        api_key: "some api_key",
+        provider: "some provider",
+        usage_type: "some usage_type",
+        tier: "some tier",
+        model: "some model",
+        base_url: "some base_url",
+        settings: %{}
+      }
 
       assert {:ok, %LlmConfig{} = llm_config} = Config.create_llm_config(valid_attrs)
       assert llm_config.active == true
@@ -42,7 +64,19 @@ defmodule DocCoffeeLite.ConfigTest do
 
     test "update_llm_config/2 with valid data updates the llm_config" do
       llm_config = llm_config_fixture()
-      update_attrs = %{active: false, name: "some updated name", fallback: false, api_key: "some updated api_key", provider: "some updated provider", usage_type: "some updated usage_type", tier: "some updated tier", model: "some updated model", base_url: "some updated base_url", settings: %{}}
+
+      update_attrs = %{
+        active: false,
+        name: "some updated name",
+        fallback: false,
+        api_key: "some updated api_key",
+        provider: "some updated provider",
+        usage_type: "some updated usage_type",
+        tier: "some updated tier",
+        model: "some updated model",
+        base_url: "some updated base_url",
+        settings: %{}
+      }
 
       assert {:ok, %LlmConfig{} = llm_config} = Config.update_llm_config(llm_config, update_attrs)
       assert llm_config.active == false

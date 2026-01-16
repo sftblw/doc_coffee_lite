@@ -11,7 +11,7 @@ defmodule DocCoffeeLite.Translation.TranslationGroup do
     field :group_type, :string
     field :cursor, :integer, default: 0
     field :context_summary, :string
-    
+
     belongs_to :project, DocCoffeeLite.Translation.Project
     belongs_to :source_document, DocCoffeeLite.Translation.SourceDocument
     belongs_to :document_node, DocCoffeeLite.Translation.DocumentNode
@@ -23,7 +23,19 @@ defmodule DocCoffeeLite.Translation.TranslationGroup do
   @doc false
   def changeset(translation_group, attrs) do
     translation_group
-    |> cast(attrs, [:project_id, :source_document_id, :document_node_id, :group_key, :group_type, :position, :status, :progress, :cursor, :context_summary, :metadata])
+    |> cast(attrs, [
+      :project_id,
+      :source_document_id,
+      :document_node_id,
+      :group_key,
+      :group_type,
+      :position,
+      :status,
+      :progress,
+      :cursor,
+      :context_summary,
+      :metadata
+    ])
     |> validate_required([:group_key, :group_type, :position, :status, :progress, :cursor])
   end
 end

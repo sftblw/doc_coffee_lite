@@ -44,17 +44,23 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
 
         {:ok, %{tree: tree, groups: Enum.reverse(groups)}}
 
-      {:error, reason} -> {:error, reason}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   defp build_groups(session, content_paths, root_id, nodes) do
-    Enum.reduce_while(Enum.with_index(content_paths), {:ok, {nodes, [], []}}, fn {path, index}, {:ok, {nodes, groups, file_ids}} ->
+    Enum.reduce_while(Enum.with_index(content_paths), {:ok, {nodes, [], []}}, fn {path, index},
+                                                                                 {:ok,
+                                                                                  {nodes, groups,
+                                                                                   file_ids}} ->
       case build_group(session, path, index, root_id) do
         {:ok, {file_node, block_nodes, group}} ->
           nodes = nodes |> Map.put(file_node.node_id, file_node) |> Map.merge(block_nodes)
           {:cont, {:ok, {nodes, [group | groups], [file_node.node_id | file_ids]}}}
-        {:error, reason} -> {:halt, {:error, reason}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
       end
     end)
   end
@@ -62,12 +68,11 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
   defp build_group(session, path, index, root_id) do
     with {:ok, xml} <- Session.read_file(session, path),
          {:ok, doc} <- Floki.parse_document(xml) do
-      
       file_node_id = "file:#{path}"
-      
+
       # 1. Inject markers and collect units
       {tagged_doc, elements} = inject_markers(doc, path)
-      
+
       # 2. Save the tagged document back to work_dir!
       # This is the "Anchor" that Export will use later.
       tagged_xml = Floki.raw_html(tagged_doc)
@@ -82,13 +87,19 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
         node_type: :file,
         source_path: path,
         node_path: path,
-        position: index, level: 1,
-        parent_id: root_id, children_ids: child_ids
+        position: index,
+        level: 1,
+        parent_id: root_id,
+        children_ids: child_ids
       }
 
       group = %TranslationGroup{
-        group_key: path, group_type: :file, position: index,
-        source_path: path, node_id: file_node_id, units: units
+        group_key: path,
+        group_type: :file,
+        position: index,
+        source_path: path,
+        node_id: file_node_id,
+        units: units
       }
 
       {:ok, {file_node, block_nodes, group}}
@@ -98,23 +109,27 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
   end
 
   defp inject_markers(doc, _path) do
-    {updated_doc, {elements, _count}} = 
+    {updated_doc, {elements, _count}} =
       Floki.traverse_and_update(doc, {[], 0}, fn
         {tag, attrs, children} = node, {acc, count} ->
           tag_s = to_string(tag)
+
           cond do
             # If it's a container OR a block that contains more blocks, keep going deeper
             tag_s in @container_tags or (tag_s in @block_tags and has_block_child?(children)) ->
-              {node, {acc, count}} # Don't tag containers, just traverse
-              
+              # Don't tag containers, just traverse
+              {node, {acc, count}}
+
             tag_s in @block_tags ->
               # Leaf block! Tag it.
               id = "u_#{count}"
               new_node = {tag, [{"data-unit-id", id} | attrs], children}
               {new_node, {acc ++ [{id, new_node}], count + 1}}
-              
-            true -> {node, {acc, count}}
+
+            true ->
+              {node, {acc, count}}
           end
+
         text, {acc, count} when is_binary(text) ->
           if String.trim(text) != "" do
             # Naked text - we can't easily tag it without wrapping, 
@@ -125,19 +140,25 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
           else
             {text, {acc, count}}
           end
-        node, acc -> {node, acc}
+
+        node, acc ->
+          {node, acc}
       end)
+
     {updated_doc, elements}
   end
 
   defp has_block_child?(nodes) when is_list(nodes) do
     Enum.any?(nodes, fn
-      {tag, _, children} -> 
+      {tag, _, children} ->
         tag_s = to_string(tag)
         tag_s in @block_tags or tag_s in @container_tags or has_block_child?(children)
-      _ -> false
+
+      _ ->
+        false
     end)
   end
+
   defp has_block_child?(_), do: false
 
   defp build_units(elements, path, file_node_id) do
@@ -149,16 +170,27 @@ defmodule DocCoffeeLite.Translation.Adapters.EpubAdapter do
       {protected_text, mapping} = Placeholder.protect(markup)
 
       node = %DocumentTreeNode{
-        node_id: node_id, node_type: :block, source_path: path,
-        node_path: "body/[#{index + 1}]", position: index, level: 2,
-        parent_id: file_node_id, children_ids: []
+        node_id: node_id,
+        node_type: :block,
+        source_path: path,
+        node_path: "body/[#{index + 1}]",
+        position: index,
+        level: 2,
+        parent_id: file_node_id,
+        children_ids: []
       }
 
       unit = %TranslationUnit{
-        unit_key: id, # Use the marker ID as unit_key!
-        position: index, source_text: protected_text, source_markup: markup,
-        placeholders: mapping, source_hash: hash_source(markup),
-        node_id: node_id, node_path: node.node_path, metadata: %{}
+        # Use the marker ID as unit_key!
+        unit_key: id,
+        position: index,
+        source_text: protected_text,
+        source_markup: markup,
+        placeholders: mapping,
+        source_hash: hash_source(markup),
+        node_id: node_id,
+        node_path: node.node_path,
+        metadata: %{}
       }
 
       {[unit | units], Map.put(nodes, node_id, node), [node_id | child_ids]}

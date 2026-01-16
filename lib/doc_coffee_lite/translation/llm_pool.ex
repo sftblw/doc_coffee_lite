@@ -51,65 +51,76 @@ defmodule DocCoffeeLite.Translation.LlmPool do
   @impl true
   def handle_call({:checkout, urls}, _from, state) do
     # Initialize unknown URLs
-    state = Enum.reduce(urls, state, fn url, acc ->
-      Map.put_new(acc, url, %{status: :idle, last_fail: nil, usage_count: 0, last_checkout: nil})
-    end)
+    state =
+      Enum.reduce(urls, state, fn url, acc ->
+        Map.put_new(acc, url, %{status: :idle, last_fail: nil, usage_count: 0, last_checkout: nil})
+      end)
 
     # 1. Filter healthy URLs AND auto-release stale ones (10 mins)
     now = DateTime.utc_now()
-    healthy_urls = Enum.filter(urls, fn url ->
-      is_stale = 
-        case state[url].last_checkout do
-          nil -> false
-          time -> DateTime.diff(now, time) > 600 # 10 minutes
-        end
 
-      is_healthy = 
-        case state[url].last_fail do
-          nil -> true
-          time -> DateTime.diff(now, time) > 60
-        end
+    healthy_urls =
+      Enum.filter(urls, fn url ->
+        is_stale =
+          case state[url].last_checkout do
+            nil -> false
+            # 10 minutes
+            time -> DateTime.diff(now, time) > 600
+          end
 
-      is_healthy or is_stale
-    end)
+        is_healthy =
+          case state[url].last_fail do
+            nil -> true
+            time -> DateTime.diff(now, time) > 60
+          end
+
+        is_healthy or is_stale
+      end)
 
     candidates = if healthy_urls == [], do: urls, else: healthy_urls
 
     # 2. Select the one with LEAST usage among idle (or stale) ones
-    selected = 
+    selected =
       candidates
-      |> Enum.sort_by(fn url -> 
-        is_busy = state[url].status == :busy and DateTime.diff(now, state[url].last_checkout || now) < 600
-        {is_busy, state[url].usage_count} 
+      |> Enum.sort_by(fn url ->
+        is_busy =
+          state[url].status == :busy and DateTime.diff(now, state[url].last_checkout || now) < 600
+
+        {is_busy, state[url].usage_count}
       end)
       |> List.first()
 
     # 3. Mark as busy and increment usage
-    new_state = state
-    |> put_in([selected, :status], :busy)
-    |> put_in([selected, :last_checkout], now)
-    |> update_in([selected, :usage_count], &(&1 + 1))
+    new_state =
+      state
+      |> put_in([selected, :status], :busy)
+      |> put_in([selected, :last_checkout], now)
+      |> update_in([selected, :usage_count], &(&1 + 1))
 
     {:reply, selected, new_state}
   end
 
   @impl true
   def handle_cast({:checkin, url}, state) do
-    new_state = if Map.has_key?(state, url) do
-      put_in(state, [url, :status], :idle)
-    else
-      state
-    end
+    new_state =
+      if Map.has_key?(state, url) do
+        put_in(state, [url, :status], :idle)
+      else
+        state
+      end
+
     {:noreply, new_state}
   end
 
   @impl true
   def handle_cast({:report_failure, url}, state) do
     Logger.warning("LLM Server marked as unhealthy: #{url}")
-    new_state = state
-    |> put_in([url, :status], :idle)
-    |> put_in([url, :last_fail], DateTime.utc_now())
-    
+
+    new_state =
+      state
+      |> put_in([url, :status], :idle)
+      |> put_in([url, :last_fail], DateTime.utc_now())
+
     {:noreply, new_state}
   end
 end

@@ -4,16 +4,13 @@ defmodule DocCoffeeLite.Translation.Persistence do
   """
 
   alias DocCoffeeLite.Repo
-  alias DocCoffeeLite.Translation.Project
-  alias DocCoffeeLite.Translation.SourceDocument
   alias DocCoffeeLite.Translation.DocumentNode
   alias DocCoffeeLite.Translation.TranslationGroup
   alias DocCoffeeLite.Translation.TranslationUnit
-  
+
   alias DocCoffeeLite.Translation.DocumentTree
   alias DocCoffeeLite.Translation.DocumentTreeNode, as: TreeNode
   alias DocCoffeeLite.Translation.Structs.TranslationGroup, as: GroupStruct
-  alias DocCoffeeLite.Translation.Structs.TranslationUnit, as: UnitStruct
 
   @spec persist(DocumentTree.t(), [GroupStruct.t()], String.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -46,7 +43,7 @@ defmodule DocCoffeeLite.Translation.Persistence do
 
   defp persist_node(%TreeNode{} = node, source_document_id, node_map) do
     parent_id = resolve_parent_node_id(node.parent_id, node_map)
-    
+
     attrs = %{
       node_id: node.node_id,
       node_type: to_string(node.node_type),
@@ -82,7 +79,7 @@ defmodule DocCoffeeLite.Translation.Persistence do
 
   defp persist_group(%GroupStruct{} = group, project_id, source_document_id, node_map) do
     document_node_id = resolve_group_node_id(group.node_id, node_map)
-    
+
     attrs = %{
       group_key: group.group_key,
       group_type: to_string(group.group_type),
@@ -105,7 +102,7 @@ defmodule DocCoffeeLite.Translation.Persistence do
   end
 
   defp persist_units(groups, group_map, node_map) do
-    units = 
+    units =
       groups
       |> Enum.flat_map(fn group ->
         case Map.fetch(group_map, group.group_key) do
@@ -119,7 +116,7 @@ defmodule DocCoffeeLite.Translation.Persistence do
 
     # For simplicity, we insert them one by one or use insert_all
     # Let's use Repo.insert for now to handle conflicts easily
-    results = 
+    results =
       Enum.map(units, fn attrs ->
         %TranslationUnit{}
         |> TranslationUnit.changeset(attrs)
@@ -138,7 +135,8 @@ defmodule DocCoffeeLite.Translation.Persistence do
   defp prepare_group_units(%GroupStruct{} = group, group_record, node_map) do
     Enum.map(group.units, fn unit ->
       document_node_id = resolve_unit_node_id(unit.node_id, node_map)
-      %{ 
+
+      %{
         unit_key: unit.unit_key,
         position: unit.position || 0,
         source_text: unit.source_text,
@@ -154,6 +152,7 @@ defmodule DocCoffeeLite.Translation.Persistence do
   end
 
   defp resolve_parent_node_id(nil, _node_map), do: nil
+
   defp resolve_parent_node_id(parent_key, node_map) do
     case Map.fetch(node_map, parent_key) do
       {:ok, node} -> node.id
@@ -162,6 +161,7 @@ defmodule DocCoffeeLite.Translation.Persistence do
   end
 
   defp resolve_group_node_id(nil, _node_map), do: nil
+
   defp resolve_group_node_id(node_id, node_map) do
     case Map.fetch(node_map, node_id) do
       {:ok, node} -> node.id
@@ -170,6 +170,7 @@ defmodule DocCoffeeLite.Translation.Persistence do
   end
 
   defp resolve_unit_node_id(nil, _node_map), do: nil
+
   defp resolve_unit_node_id(node_id, node_map) do
     case Map.fetch(node_map, node_id) do
       {:ok, node} -> node.id
@@ -181,5 +182,6 @@ defmodule DocCoffeeLite.Translation.Persistence do
     :crypto.hash(:sha256, source)
     |> Base.encode16(case: :lower)
   end
+
   defp hash_source(_), do: nil
 end

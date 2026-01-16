@@ -11,7 +11,7 @@ defmodule DocCoffeeLite.Translation.DocumentNode do
     field :level, :integer
     field :title, :string
     field :metadata, :map, default: %{}
-    
+
     belongs_to :source_document, DocCoffeeLite.Translation.SourceDocument
     belongs_to :parent_node, DocCoffeeLite.Translation.DocumentNode, foreign_key: :parent_node_id
     has_many :child_nodes, DocCoffeeLite.Translation.DocumentNode, foreign_key: :parent_node_id
@@ -24,7 +24,18 @@ defmodule DocCoffeeLite.Translation.DocumentNode do
   @doc false
   def changeset(document_node, attrs) do
     document_node
-    |> cast(attrs, [:source_document_id, :parent_node_id, :node_id, :node_type, :source_path, :node_path, :position, :level, :title, :metadata])
+    |> cast(attrs, [
+      :source_document_id,
+      :parent_node_id,
+      :node_id,
+      :node_type,
+      :source_path,
+      :node_path,
+      :position,
+      :level,
+      :title,
+      :metadata
+    ])
     |> validate_required([:node_id, :node_type, :source_path, :position, :level])
   end
 end

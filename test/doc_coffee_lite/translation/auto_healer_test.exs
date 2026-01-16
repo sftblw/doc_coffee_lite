@@ -60,6 +60,13 @@ defmodule DocCoffeeLite.Translation.AutoHealerTest do
     assert out == "[[p_1]]a [[b_2]]번역X[[/b_2]] y[[/p_1]]"
   end
 
+  test "child reorder: 자식 노드 순서가 바뀌어도 dst 순서를 유지" do
+    src = "[[p_1]]A [[b_2]]B[[/b_2]] C [[i_3]]I[[/i_3]] D[[/p_1]]"
+    dst = "[[p_1]]A [[i_3]]아이[[/i_3]] C [[b_2]]비[[/b_2]] D[[/p_1]]"
+    out = heal!(src, dst)
+    assert out == dst
+  end
+
   test "fail_if_no_anchor: dst에서 태그 앵커 0개면 실패시키기" do
     src = "[[p_1]]A[[/p_1]]"
     dst = "그냥 텍스트만"

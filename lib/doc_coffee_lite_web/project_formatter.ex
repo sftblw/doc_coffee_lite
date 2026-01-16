@@ -11,10 +11,11 @@ defmodule DocCoffeeLiteWeb.ProjectFormatter do
   def list_projects(opts \\ []) do
     limit = Keyword.get(opts, :limit, @default_limit)
 
-    query = from p in Project,
-      order_by: [desc: p.updated_at],
-      limit: ^limit,
-      preload: [:source_document]
+    query =
+      from p in Project,
+        order_by: [desc: p.updated_at],
+        limit: ^limit,
+        preload: [:source_document]
 
     Repo.all(query)
     |> Enum.map(&format_project/1)
@@ -23,7 +24,7 @@ defmodule DocCoffeeLiteWeb.ProjectFormatter do
   defp format_project(%Project{} = project) do
     source_document = project.source_document
 
-    %{ 
+    %{
       id: project.id,
       title: project.title || "Untitled project",
       format: format_label(format_from_source(source_document)),
@@ -47,6 +48,7 @@ defmodule DocCoffeeLiteWeb.ProjectFormatter do
   defp format_from_source(_), do: nil
 
   defp sections_count(nil), do: 0
+
   defp sections_count(project_id) do
     Repo.aggregate(from(g in TranslationGroup, where: g.project_id == ^project_id), :count, :id)
   end
@@ -68,8 +70,10 @@ defmodule DocCoffeeLiteWeb.ProjectFormatter do
   def normalize_progress(_progress), do: 0
 
   def relative_time(nil), do: "unknown"
+
   def relative_time(%DateTime{} = timestamp) do
     seconds = DateTime.diff(DateTime.utc_now(), timestamp, :second)
+
     cond do
       seconds < 60 -> "just now"
       seconds < 3600 -> "#{div(seconds, 60)}m ago"
@@ -79,6 +83,7 @@ defmodule DocCoffeeLiteWeb.ProjectFormatter do
       true -> Calendar.strftime(timestamp, "%Y-%m-%d")
     end
   end
+
   def relative_time(_), do: "unknown"
 
   def status_label("draft"), do: "Draft"

@@ -17,7 +17,8 @@ defmodule DocCoffeeLite.Epub do
   @spec content_paths(DocCoffeeLite.Epub.Session.t()) :: [String.t()]
   def content_paths(session), do: DocCoffeeLite.Epub.Session.content_paths(session)
 
-  @spec read_file(DocCoffeeLite.Epub.Session.t(), String.t()) :: {:ok, binary()} | {:error, term()}
+  @spec read_file(DocCoffeeLite.Epub.Session.t(), String.t()) ::
+          {:ok, binary()} | {:error, term()}
   def read_file(session, path), do: DocCoffeeLite.Epub.Session.read_file(session, path)
 
   @spec update_file(DocCoffeeLite.Epub.Session.t(), String.t(), iodata()) ::

@@ -15,11 +15,9 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectPrepareWorker do
 
   require Logger
 
-  alias DocCoffeeLite.Repo
   alias DocCoffeeLite.Epub
   alias DocCoffeeLite.Translation
   alias DocCoffeeLite.Translation.Project
-  alias DocCoffeeLite.Translation.SourceDocument
   alias DocCoffeeLite.Translation.Segmenter
   alias DocCoffeeLite.Translation.Persistence
   alias DocCoffeeLite.Translation.PolicyGenerator
@@ -32,7 +30,6 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectPrepareWorker do
   def perform(%Oban.Job{
         args: %{"project_id" => project_id, "source_document_id" => source_document_id}
       }) do
-    
     with project <- Translation.get_project!(project_id),
          source_document <- Translation.get_source_document!(source_document_id),
          :ok <- ensure_empty_work_dir(source_document.work_dir),
@@ -41,7 +38,8 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectPrepareWorker do
          {:ok, _persisted} <- Persistence.persist(tree, groups, project.id, source_document.id),
          {:ok, _policies} <- PolicyGenerator.generate_from_session(project.id, session),
          {:ok, _terms} <- GlossaryCollector.collect(project.id),
-         {:ok, _run} <- RunCreator.create(project.id, status: "draft", llm_opts: [allow_missing?: true]),
+         {:ok, _run} <-
+           RunCreator.create(project.id, status: "draft", llm_opts: [allow_missing?: true]),
          {:ok, _project} <- clear_prepare_error(project) do
       :ok
     else
@@ -59,15 +57,21 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectPrepareWorker do
 
   defp ensure_empty_work_dir(work_dir) do
     case File.ls(work_dir) do
-      {:error, :enoent} -> :ok
-      {:ok, []} -> :ok
+      {:error, :enoent} ->
+        :ok
+
+      {:ok, []} ->
+        :ok
+
       {:ok, _} ->
         File.rm_rf(work_dir)
         |> case do
           {:ok, _} -> :ok
           {:error, reason, _} -> {:error, reason}
         end
-      {:error, reason} -> {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

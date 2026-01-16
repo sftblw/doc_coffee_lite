@@ -25,7 +25,7 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
     allow_missing? = Keyword.get(opts, :allow_missing?, false)
 
     configs = list_relevant_configs(project_id)
-    
+
     {config_map, missing} = build_snapshot(configs, usage_types, tiers)
 
     snapshot = %{
@@ -49,10 +49,11 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
 
   defp list_relevant_configs(project_id) do
     # Fetch project-specific and global fallback configs
-    query = from c in LlmConfig,
-      where: c.active == true and (c.project_id == ^project_id or is_nil(c.project_id)),
-      order_by: [desc: c.project_id, desc: c.updated_at]
-      
+    query =
+      from c in LlmConfig,
+        where: c.active == true and (c.project_id == ^project_id or is_nil(c.project_id)),
+        order_by: [desc: c.project_id, desc: c.updated_at]
+
     Repo.all(query)
   end
 
@@ -63,11 +64,11 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
     global_fallback = Enum.find(configs, & &1.fallback)
 
     Enum.reduce(usage_types, {%{}, []}, fn usage_type, {acc, missing} ->
-      {tier_map, missing} = 
+      {tier_map, missing} =
         Enum.reduce(tiers, {%{}, missing}, fn tier, {tier_acc, missing} ->
           key = {to_string(usage_type), to_string(tier)}
-          
-          selected = 
+
+          selected =
             case Map.get(grouped, key) do
               [config | _] -> config
               _ -> global_fallback || env_fallback()
@@ -95,10 +96,10 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
 
     if server_env && model do
       # Support multiple servers separated by comma
-      servers = 
-        server_env 
-        |> String.split(",") 
-        |> Enum.map(&String.trim/1) 
+      servers =
+        server_env
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
         |> Enum.reject(&(&1 == ""))
 
       %{
@@ -119,10 +120,14 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
     end
   end
 
-  defp serialize_config(%{id: "env"} = config), do: Map.new(config, fn {k, v} -> {to_string(k), v} end) |> Map.update!("inserted_at", &DateTime.to_iso8601/1) |> Map.update!("updated_at", &DateTime.to_iso8601/1)
+  defp serialize_config(%{id: "env"} = config),
+    do:
+      Map.new(config, fn {k, v} -> {to_string(k), v} end)
+      |> Map.update!("inserted_at", &DateTime.to_iso8601/1)
+      |> Map.update!("updated_at", &DateTime.to_iso8601/1)
 
   defp serialize_config(config) do
-    %{ 
+    %{
       "id" => config.id,
       "name" => config.name,
       "usage_type" => to_string(config.usage_type),

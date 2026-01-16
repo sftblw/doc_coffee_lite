@@ -13,7 +13,7 @@ defmodule DocCoffeeLite.Translation.PolicySnapshot do
   @spec build(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def build(project_id, opts \\ []) do
     statuses = Keyword.get(opts, :statuses, @default_statuses) |> Enum.map(&to_string/1)
-    
+
     policies = load_policies(project_id, statuses)
     {selected, overridden} = layer_policies(policies, opts)
     compiled_text = compile_text(selected)
@@ -35,9 +35,10 @@ defmodule DocCoffeeLite.Translation.PolicySnapshot do
   end
 
   defp load_policies(project_id, statuses) do
-    query = from p in PolicySet,
-      where: p.project_id == ^project_id and p.status in ^statuses
-      
+    query =
+      from p in PolicySet,
+        where: p.project_id == ^project_id and p.status in ^statuses
+
     Repo.all(query)
   end
 

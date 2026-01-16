@@ -18,7 +18,7 @@ defmodule DocCoffeeLiteWeb.Router do
   scope "/", DocCoffeeLiteWeb do
     pipe_through :browser
 
-    oban_dashboard "/oban"
+    oban_dashboard("/oban")
     live "/", HomeLive
     live "/projects", ProjectLive.Index
     live "/projects/:project_id", ProjectLive

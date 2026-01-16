@@ -8,7 +8,7 @@ defmodule DocCoffeeLite.Translation.SourceDocument do
     field :work_dir, :string
     field :checksum, :string
     field :metadata, :map, default: %{}
-    
+
     belongs_to :project, DocCoffeeLite.Translation.Project
     has_many :document_nodes, DocCoffeeLite.Translation.DocumentNode
     has_many :translation_groups, DocCoffeeLite.Translation.TranslationGroup

@@ -15,9 +15,10 @@ defmodule DocCoffeeLite.Translation.GlossarySnapshot do
     limit = Keyword.get(opts, :limit)
     min_usage = Keyword.get(opts, :min_usage)
 
-    query = from g in GlossaryTerm,
-      where: g.project_id == ^project_id and g.status in ^statuses,
-      order_by: [desc: g.usage_count, asc: g.source_text]
+    query =
+      from g in GlossaryTerm,
+        where: g.project_id == ^project_id and g.status in ^statuses,
+        order_by: [desc: g.usage_count, asc: g.source_text]
 
     query = if min_usage, do: from(g in query, where: g.usage_count >= ^min_usage), else: query
     query = if limit, do: from(g in query, limit: ^limit), else: query

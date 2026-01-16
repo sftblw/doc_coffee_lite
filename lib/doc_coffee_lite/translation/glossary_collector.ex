@@ -19,8 +19,8 @@ defmodule DocCoffeeLite.Translation.GlossaryCollector do
     max_length = Keyword.get(opts, :max_length, @default_max_length)
 
     units = load_units(project_id, opts)
-    
-    candidates = 
+
+    candidates =
       units
       |> Enum.flat_map(&extract_terms(&1.source_text, min_length, max_length))
       |> Enum.frequencies()
@@ -31,19 +31,19 @@ defmodule DocCoffeeLite.Translation.GlossaryCollector do
   end
 
   defp load_units(project_id, opts) do
-    query = 
+    query =
       from u in TranslationUnit,
         join: g in assoc(u, :translation_group),
         where: g.project_id == ^project_id
 
-    query = 
+    query =
       case Keyword.get(opts, :group_ids) do
         nil -> query
         [] -> query
         ids -> from u in query, where: u.translation_group_id in ^ids
       end
 
-    query = 
+    query =
       case Keyword.get(opts, :status) do
         nil -> query
         [] -> query
@@ -73,13 +73,13 @@ defmodule DocCoffeeLite.Translation.GlossaryCollector do
   defp valid_term?(term, min_length, max_length) do
     length = String.length(term)
 
-    length >= min_length and length <= max_length and 
+    length >= min_length and length <= max_length and
       String.match?(term, ~r/[[:alpha:]]/u)
   end
 
   defp persist_terms(project_id, candidates) do
-    Repo.transaction(fn -> 
-      Enum.map(candidates, fn {term, count} -> 
+    Repo.transaction(fn ->
+      Enum.map(candidates, fn {term, count} ->
         attrs = %{
           project_id: project_id,
           source_text: term,
@@ -97,10 +97,4 @@ defmodule DocCoffeeLite.Translation.GlossaryCollector do
       end)
     end)
   end
-
-  defp hash_source(source) when is_binary(source) do
-    :crypto.hash(:sha256, source)
-    |> Base.encode16(case: :lower)
-  end
-  defp hash_source(_), do: nil
 end

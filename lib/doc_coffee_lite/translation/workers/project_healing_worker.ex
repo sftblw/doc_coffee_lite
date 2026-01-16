@@ -21,10 +21,10 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectHealingWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"project_id" => project_id}}) do
     project = Repo.get(Project, project_id) |> Repo.preload(:translation_runs)
-    
+
     if project do
       latest_run = Enum.max_by(project.translation_runs, & &1.inserted_at, fn -> nil end)
-      
+
       if latest_run do
         Logger.info("Starting AutoHealing for Project #{project_id}, Run #{latest_run.id}")
         heal_run(latest_run.id)
@@ -40,19 +40,24 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectHealingWorker do
   defp heal_run(run_id) do
     # Stream all BlockTranslations with their Source Unit
     # This avoids loading everything into memory
-    query = from b in BlockTranslation,
-      join: u in TranslationUnit, on: b.translation_unit_id == u.id,
-      where: b.translation_run_id == ^run_id,
-      select: {b, u}
+    query =
+      from b in BlockTranslation,
+        join: u in TranslationUnit,
+        on: b.translation_unit_id == u.id,
+        where: b.translation_run_id == ^run_id,
+        select: {b, u}
 
-    Repo.transaction(fn ->
-      query
-      |> Repo.stream()
-      |> Enum.each(fn {block, unit} ->
-        heal_block(block, unit)
-      end)
-    end, timeout: :infinity)
-    
+    Repo.transaction(
+      fn ->
+        query
+        |> Repo.stream()
+        |> Enum.each(fn {block, unit} ->
+          heal_block(block, unit)
+        end)
+      end,
+      timeout: :infinity
+    )
+
     Logger.info("Finished AutoHealing for Run #{run_id}")
     :ok
   end
@@ -60,13 +65,13 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectHealingWorker do
   defp heal_block(block, unit) do
     # Only heal if it hasn't been healed or if we want to force re-heal.
     # For now, we force re-heal to ensure consistency.
-    
+
     case AutoHealer.heal(unit.source_text, block.translated_text) do
       {:ok, healed_text} ->
         if healed_text != block.translated_text do
           update_block(block, healed_text, unit.placeholders, "ok")
         end
-        
+
       {:error, %AutoHealer.HealError{} = err} ->
         Logger.debug("Skipping AutoHeal for block #{block.id}: #{err.message}")
         # Mark as failed in metadata but keep original text
@@ -77,7 +82,7 @@ defmodule DocCoffeeLite.Translation.Workers.ProjectHealingWorker do
   defp update_block(block, new_text, placeholders, status) do
     # Restore markup from new text
     new_markup = Placeholder.restore(new_text, placeholders || %{})
-    
+
     # Merge metadata
     new_metadata = Map.put(block.metadata || %{}, "healing_status", status)
     new_metadata = Map.put(new_metadata, "healed_at", DateTime.utc_now() |> DateTime.to_iso8601())
