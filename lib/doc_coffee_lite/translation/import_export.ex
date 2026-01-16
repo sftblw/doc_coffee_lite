@@ -158,7 +158,9 @@ defmodule DocCoffeeLite.Translation.ImportExport do
                {:ok, translations} <- read_translations(tmp_dir, manifest),
                :ok <- verify_compatibility(project, manifest),
                {:ok, run_id} <- ensure_run_id(project),
-               {:ok, count} <- apply_translations(project, translations, run_id) do
+               {:ok, count} <- apply_translations(project, translations, run_id),
+               {:ok, _progress, _completed, _total} <-
+                 Translation.sync_project_progress_for_import(project.id) do
             {:ok, count}
           end
 
@@ -274,7 +276,9 @@ defmodule DocCoffeeLite.Translation.ImportExport do
                {:ok, source_doc} <- setup_source_document(project, tmp_dir, manifest),
                :ok <- parse_source_document(project, source_doc),
                {:ok, run_id} <- ensure_run_id(project),
-               {:ok, _count} <- apply_translations(project, translations, run_id) do
+               {:ok, _count} <- apply_translations(project, translations, run_id),
+               {:ok, _progress, _completed, _total} <-
+                 Translation.sync_project_progress_for_import(project.id) do
             {:ok, project}
           end
 
