@@ -18,6 +18,7 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   alias DocCoffeeLite.Translation.BlockTranslation
   alias DocCoffeeLite.Translation.LlmClient
   alias DocCoffeeLite.Translation.AutoHealer
+  alias DocCoffeeLite.Translation.SimilarityGuard
 
   @pending_statuses ["pending", "queued", "translating"]
   @pause_snooze_seconds 10
@@ -122,35 +123,54 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
         end
 
         # 5. Parse and save each unit
-        Enum.each(units, fn unit ->
-          # Result can be a map (structured) or a string (raw blob)
-          translated_text =
-            case result do
-              %{} = map ->
-                Map.get(map, unit.unit_key) || unit.source_text
+        result =
+          Enum.reduce_while(units, :ok, fn unit, :ok ->
+            # Result can be a map (structured) or a string (raw blob)
+            translated_text =
+              case result do
+                %{} = map ->
+                  Map.get(map, unit.unit_key) || unit.source_text
 
-              blob when is_binary(blob) ->
-                extract_unit_content(blob, unit.unit_key) || unit.source_text
+                blob when is_binary(blob) ->
+                  extract_unit_content(blob, unit.unit_key) || unit.source_text
+              end
+
+            translated_markup =
+              DocCoffeeLite.Translation.Placeholder.restore(
+                translated_text,
+                unit.placeholders || %{}
+              )
+
+            case save_translation_result(
+                   run,
+                   unit,
+                   {translated_text, translated_markup, llm_response},
+                   "llm"
+                 ) do
+              {:ok, _} ->
+                set_unit_status(unit, "translated")
+                {:cont, :ok}
+
+              {:error, %SimilarityGuard.SimilarityError{} = error} ->
+                Logger.warning(
+                  "Translation too similar for unit #{unit.id} (#{unit.unit_key}): #{error.ratio}"
+                )
+
+                {:halt, {:error, error}}
+
+              {:error, reason} ->
+                {:halt, {:error, reason}}
             end
+          end)
 
-          translated_markup =
-            DocCoffeeLite.Translation.Placeholder.restore(
-              translated_text,
-              unit.placeholders || %{}
-            )
+        case result do
+          :ok ->
+            DocCoffeeLite.Translation.update_project_progress(run.project_id)
+            :ok
 
-          save_translation_result(
-            run,
-            unit,
-            {translated_text, translated_markup, llm_response},
-            "llm"
-          )
-
-          set_unit_status(unit, "translated")
-        end)
-
-        DocCoffeeLite.Translation.update_project_progress(run.project_id)
-        :ok
+          {:error, reason} ->
+            {:error, reason}
+        end
 
       {:error, reason} ->
         Logger.error("Batch translation failed: #{inspect(reason)}")
@@ -196,44 +216,46 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
         {:error, %AutoHealer.HealError{}} -> {text, "healing_failed"}
       end
 
-    # 2. Restore placeholders using the HEALED text
-    translated_markup =
-      DocCoffeeLite.Translation.Placeholder.restore(healed_text, unit.placeholders || %{})
+    with {:ok, _ratio} <- SimilarityGuard.check_high(unit.source_text, healed_text) do
+      # 2. Restore placeholders using the HEALED text
+      translated_markup =
+        DocCoffeeLite.Translation.Placeholder.restore(healed_text, unit.placeholders || %{})
 
-    sanitized_resp =
-      case resp do
-        %{"raw" => raw} when is_binary(raw) -> %{"raw_summary" => String.slice(raw, 0, 1000)}
-        %{} = map -> Map.take(map, ["role", "content", "status", "usage"])
-        _ -> %{}
-      end
+      sanitized_resp =
+        case resp do
+          %{"raw" => raw} when is_binary(raw) -> %{"raw_summary" => String.slice(raw, 0, 1000)}
+          %{} = map -> Map.take(map, ["role", "content", "status", "usage"])
+          _ -> %{}
+        end
 
-    attrs = %{
-      translation_run_id: run.id,
-      translation_unit_id: unit.id,
-      status: "translated",
-      translated_text: healed_text,
-      translated_markup: translated_markup,
-      placeholders: unit.placeholders || %{},
-      llm_response: sanitized_resp,
-      metrics: %{},
-      metadata: %{
-        "strategy" => strategy,
-        "source_hash" => unit.source_hash,
-        "healing_status" => healing_status
+      attrs = %{
+        translation_run_id: run.id,
+        translation_unit_id: unit.id,
+        status: "translated",
+        translated_text: healed_text,
+        translated_markup: translated_markup,
+        placeholders: unit.placeholders || %{},
+        llm_response: sanitized_resp,
+        metrics: %{},
+        metadata: %{
+          "strategy" => strategy,
+          "source_hash" => unit.source_hash,
+          "healing_status" => healing_status
+        }
       }
-    }
 
-    try do
-      %BlockTranslation{}
-      |> BlockTranslation.changeset(attrs)
-      |> Repo.insert(
-        on_conflict: {:replace_all_except, [:id, :inserted_at]},
-        conflict_target: [:translation_run_id, :translation_unit_id]
-      )
-    rescue
-      e ->
-        Logger.error("DATABASE INSERT EXCEPTION: #{inspect(e)}")
-        {:error, e}
+      try do
+        %BlockTranslation{}
+        |> BlockTranslation.changeset(attrs)
+        |> Repo.insert(
+          on_conflict: {:replace_all_except, [:id, :inserted_at]},
+          conflict_target: [:translation_run_id, :translation_unit_id]
+        )
+      rescue
+        e ->
+          Logger.error("DATABASE INSERT EXCEPTION: #{inspect(e)}")
+          {:error, e}
+      end
     end
   end
 

@@ -420,6 +420,33 @@ defmodule DocCoffeeLite.Translation do
     BlockTranslation.changeset(block_translation, attrs)
   end
 
+  def list_units_for_similarity_scan(project_id, opts \\ []) do
+    search = Keyword.get(opts, :search)
+
+    latest_bt_query =
+      from b in BlockTranslation,
+        distinct: b.translation_unit_id,
+        order_by: [asc: b.translation_unit_id, desc: b.inserted_at]
+
+    query =
+      from u in TranslationUnit,
+        join: g in assoc(u, :translation_group),
+        where: g.project_id == ^project_id,
+        order_by: [asc: g.position, asc: u.position],
+        preload: [block_translations: ^latest_bt_query]
+
+    query
+    |> apply_review_search_filter(search)
+    |> Repo.all()
+  end
+
+  def mark_units_dirty([]), do: {0, nil}
+
+  def mark_units_dirty(unit_ids) do
+    from(u in TranslationUnit, where: u.id in ^unit_ids)
+    |> Repo.update_all(set: [is_dirty: true, updated_at: DateTime.utc_now()])
+  end
+
   def list_units_for_review(project_id, opts \\ []) do
     offset = Keyword.get(opts, :offset, 0)
     limit = Keyword.get(opts, :limit, 100)
