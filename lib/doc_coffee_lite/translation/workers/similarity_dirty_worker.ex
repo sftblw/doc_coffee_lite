@@ -26,6 +26,7 @@ defmodule DocCoffeeLite.Translation.Workers.SimilarityDirtyWorker do
           bt ->
             case SimilarityGuard.check(unit.source_text, bt.translated_text) do
               {:ok, _ratio} -> acc
+              {:skip, _ratio} -> acc
               {:error, %SimilarityGuard.SimilarityError{}} -> [unit.id | acc]
             end
         end

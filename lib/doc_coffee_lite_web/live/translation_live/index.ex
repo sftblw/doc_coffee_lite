@@ -1,6 +1,8 @@
 defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   use DocCoffeeLiteWeb, :live_view
   alias DocCoffeeLite.Translation
+  alias DocCoffeeLite.Translation.Workers.SimilarityDirtyWorker
+  alias DocCoffeeLite.Translation.Workers.LlmValidationWorker
 
   @impl true
   def mount(%{"project_id" => project_id}, _session, socket) do
@@ -96,7 +98,12 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
   @impl true
   def handle_event("goto_page", %{"page" => page}, socket) do
     path =
-      build_path(socket.assigns.project.id, socket.assigns.search, page, socket.assigns.show_dirty_only)
+      build_path(
+        socket.assigns.project.id,
+        socket.assigns.search,
+        page,
+        socket.assigns.show_dirty_only
+      )
 
     {:noreply, push_patch(socket, to: path)}
   end
@@ -131,6 +138,42 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
      |> assign(:dirty_count, dirty_count)
      |> stream(:units, [], reset: true)
      |> load_units()}
+  end
+
+  @impl true
+  def handle_event("detect_similarity_dirty", _, socket) do
+    project_id = socket.assigns.project.id
+    search = socket.assigns.search
+
+    case SimilarityDirtyWorker.new(%{"project_id" => project_id, "search" => search})
+         |> Oban.insert() do
+      {:ok, _job} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Similarity scan enqueued.")
+         |> assign(:dirty_count, Translation.count_dirty_units(project_id))}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to enqueue scan: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
+  def handle_event("detect_llm_untranslated", _, socket) do
+    project_id = socket.assigns.project.id
+    search = socket.assigns.search
+
+    case LlmValidationWorker.new(%{"project_id" => project_id, "search" => search})
+         |> Oban.insert() do
+      {:ok, _job} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "LLM validation scan enqueued.")
+         |> assign(:dirty_count, Translation.count_dirty_units(project_id))}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to enqueue scan: #{inspect(reason)}")}
+    end
   end
 
   @impl true
@@ -286,6 +329,26 @@ defmodule DocCoffeeLiteWeb.TranslationLive.Index do
                   class="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-stone-800 shadow-sm transition-colors disabled:opacity-30"
                 >
                   <.icon name="hero-flag" class="size-4" /> Mark Filtered as Dirty
+                </button>
+                <div class="rounded-lg border border-stone-200 bg-white/70 p-3 text-[10px] text-stone-500">
+                  Detect translations that are too similar (≥ 50%) and auto-mark them dirty for
+                  re-translation.
+                </div>
+                <button
+                  id="similarity-detect-button"
+                  phx-click="detect_similarity_dirty"
+                  data-confirm="Scan translations for high similarity and mark as dirty?"
+                  class="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-amber-600 shadow-sm transition-colors"
+                >
+                  <.icon name="hero-exclamation-triangle" class="size-4" /> Detect Similarity
+                </button>
+                <button
+                  id="llm-detect-button"
+                  phx-click="detect_llm_untranslated"
+                  data-confirm="Use LLM validation to flag untranslated items?"
+                  class="inline-flex items-center gap-2 rounded-lg bg-indigo-500 px-5 py-2.5 text-xs font-bold text-white uppercase hover:bg-indigo-600 shadow-sm transition-colors"
+                >
+                  <.icon name="hero-sparkles" class="size-4" /> LLM Check
                 </button>
               </div>
               

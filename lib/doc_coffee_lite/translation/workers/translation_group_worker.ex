@@ -22,6 +22,8 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
   @pending_statuses ["pending", "queued", "translating"]
   @pause_snooze_seconds 10
+  @similarity_retry_key "similarity_retry_count"
+  @max_similarity_retries 1
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"run_id" => run_id, "group_id" => group_id} = args}) do
@@ -216,46 +218,83 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
         {:error, %AutoHealer.HealError{}} -> {text, "healing_failed"}
       end
 
-    with {:ok, _ratio} <- SimilarityGuard.check_high(unit.source_text, healed_text) do
-      # 2. Restore placeholders using the HEALED text
-      translated_markup =
-        DocCoffeeLite.Translation.Placeholder.restore(healed_text, unit.placeholders || %{})
+    {similarity_state, similarity_ratio, similarity_level} =
+      case SimilarityGuard.classify(unit.source_text, healed_text) do
+        {:ok, ratio, level} -> {:ok, ratio, level}
+        {:skip, ratio, :skip} -> {:skip, ratio, :skip}
+      end
 
-      sanitized_resp =
-        case resp do
-          %{"raw" => raw} when is_binary(raw) -> %{"raw_summary" => String.slice(raw, 0, 1000)}
-          %{} = map -> Map.take(map, ["role", "content", "status", "usage"])
-          _ -> %{}
-        end
+    llm_validation =
+      case {similarity_state, similarity_level} do
+        {:ok, :high} ->
+          validate_similarity_with_llm(run, unit, healed_text, similarity_ratio)
 
-      attrs = %{
-        translation_run_id: run.id,
-        translation_unit_id: unit.id,
-        status: "translated",
-        translated_text: healed_text,
-        translated_markup: translated_markup,
-        placeholders: unit.placeholders || %{},
-        llm_response: sanitized_resp,
-        metrics: %{},
-        metadata: %{
+        _ ->
+          {:ok, :skipped}
+      end
+
+    case llm_validation do
+      {:error, %SimilarityGuard.SimilarityError{} = error} ->
+        {:error, error}
+
+      _ ->
+        # 2. Restore placeholders using the HEALED text
+        translated_markup =
+          DocCoffeeLite.Translation.Placeholder.restore(healed_text, unit.placeholders || %{})
+
+        sanitized_resp =
+          case resp do
+            %{"raw" => raw} when is_binary(raw) -> %{"raw_summary" => String.slice(raw, 0, 1000)}
+            %{} = map -> Map.take(map, ["role", "content", "status", "usage"])
+            _ -> %{}
+          end
+
+        metadata = %{
           "strategy" => strategy,
           "source_hash" => unit.source_hash,
           "healing_status" => healing_status
         }
-      }
 
-      try do
-        %BlockTranslation{}
-        |> BlockTranslation.changeset(attrs)
-        |> Repo.insert(
-          on_conflict: {:replace_all_except, [:id, :inserted_at]},
-          conflict_target: [:translation_run_id, :translation_unit_id]
-        )
-      rescue
-        e ->
-          Logger.error("DATABASE INSERT EXCEPTION: #{inspect(e)}")
-          {:error, e}
-      end
+        metadata =
+          if similarity_state == :ok do
+            Map.merge(metadata, %{
+              "similarity_ratio" => similarity_ratio,
+              "similarity_level" => to_string(similarity_level)
+            })
+          else
+            metadata
+          end
+
+        metadata =
+          case llm_validation do
+            {:ok, status} -> Map.put(metadata, "llm_similarity_check", to_string(status))
+            {:error, _} -> Map.put(metadata, "llm_similarity_check", "failed")
+          end
+
+        attrs = %{
+          translation_run_id: run.id,
+          translation_unit_id: unit.id,
+          status: "translated",
+          translated_text: healed_text,
+          translated_markup: translated_markup,
+          placeholders: unit.placeholders || %{},
+          llm_response: sanitized_resp,
+          metrics: %{},
+          metadata: metadata
+        }
+
+        try do
+          %BlockTranslation{}
+          |> BlockTranslation.changeset(attrs)
+          |> Repo.insert(
+            on_conflict: {:replace_all_except, [:id, :inserted_at]},
+            conflict_target: [:translation_run_id, :translation_unit_id]
+          )
+        rescue
+          e ->
+            Logger.error("DATABASE INSERT EXCEPTION: #{inspect(e)}")
+            {:error, e}
+        end
     end
   end
 
@@ -337,4 +376,74 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
 
     {:ok, %{unit | status: status}}
   end
+
+  defp validate_similarity_with_llm(run, unit, healed_text, ratio) do
+    src = scrub_for_llm(unit.source_text)
+    dst = scrub_for_llm(healed_text)
+
+    case LlmClient.classify_translation(run.llm_config_snapshot, src, dst,
+           usage_type: :validation
+         ) do
+      {:ok, :not_translated} ->
+        if allow_similarity_retry?(unit) do
+          bump_similarity_retry(unit)
+
+          {:error,
+           %SimilarityGuard.SimilarityError{
+             level: :high,
+             ratio: ratio,
+             message: "LLM NOT_TRANSLATED"
+           }}
+        else
+          _ = mark_unit_dirty(unit)
+          {:ok, :not_translated_max_retries}
+        end
+
+      {:ok, status} ->
+        {:ok, status}
+
+      {:error, reason} ->
+        Logger.warning("LLM similarity check failed for unit #{unit.id}: #{inspect(reason)}")
+        {:ok, :ambiguous}
+    end
+  end
+
+  defp allow_similarity_retry?(unit) do
+    count =
+      case unit.metadata do
+        %{} = metadata -> Map.get(metadata, @similarity_retry_key, 0)
+        _ -> 0
+      end
+
+    count < @max_similarity_retries
+  end
+
+  defp bump_similarity_retry(unit) do
+    metadata =
+      case unit.metadata do
+        %{} = map -> map
+        _ -> %{}
+      end
+
+    count = Map.get(metadata, @similarity_retry_key, 0)
+    new_metadata = Map.put(metadata, @similarity_retry_key, count + 1)
+
+    from(u in TranslationUnit, where: u.id == ^unit.id)
+    |> Repo.update_all(set: [metadata: new_metadata, updated_at: DateTime.utc_now()])
+
+    :ok
+  end
+
+  defp mark_unit_dirty(unit) do
+    from(u in TranslationUnit, where: u.id == ^unit.id)
+    |> Repo.update_all(set: [is_dirty: true, updated_at: DateTime.utc_now()])
+  end
+
+  defp scrub_for_llm(text) when is_binary(text) do
+    text
+    |> String.replace(~r/\[\[[^\]]+\]\]/u, "")
+    |> String.trim()
+  end
+
+  defp scrub_for_llm(_), do: ""
 end

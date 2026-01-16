@@ -49,6 +49,42 @@ defmodule DocCoffeeLite.Translation.LlmClient do
     end
   end
 
+  @spec classify_translation(config(), String.t(), String.t(), keyword()) ::
+          {:ok, :translated | :not_translated | :ambiguous} | {:error, term()}
+  def classify_translation(config, source, translated, opts \\ [])
+      when is_map(config) and is_binary(source) and is_binary(translated) do
+    usage_type = Keyword.get(opts, :usage_type, :validation)
+
+    with {:ok, model_config, selected_url} <- build_model_config(config, usage_type) do
+      llm = ChatOpenAI.new!(model_config)
+
+      messages = [
+        Message.new_system!(
+          "# ROLE\nYou are a translation quality checker.\n\n" <>
+            "# TASK\n" <>
+            "Classify whether the translated text is actually translated from the source.\n\n" <>
+            "# CONSTRAINTS\n" <>
+            "1. Respond with ONE of: NOT_TRANSLATED, TRANSLATED, AMBIGUOUS.\n" <>
+            "2. Output ONLY the token, no punctuation or explanation.\n" <>
+            "3. Ignore placeholder tags like [[p_1]] or [[/p_1]].\n" <>
+            "4. If the translation is mostly identical or unchanged, choose NOT_TRANSLATED.\n"
+        ),
+        Message.new_user!("SOURCE:\n#{source}\n\nTRANSLATION:\n#{translated}\n")
+      ]
+
+      case ChatOpenAI.call(llm, messages) do
+        {:ok, response} ->
+          result = response |> extract_text() |> parse_validation_result()
+          if selected_url, do: LlmPool.checkin(selected_url)
+          result
+
+        {:error, reason} ->
+          if selected_url, do: LlmPool.report_failure(selected_url)
+          {:error, reason}
+      end
+    end
+  end
+
   defp run_translation_loop(llm, messages, expected_keys, retries_left, url) do
     case ChatOpenAI.call(llm, messages) do
       {:ok, response} ->
@@ -258,6 +294,21 @@ defmodule DocCoffeeLite.Translation.LlmClient do
   defp raw_extract_text(%Message{content: content}) when is_binary(content), do: content
   defp raw_extract_text(%{content: content}) when is_binary(content), do: content
   defp raw_extract_text(_), do: ""
+
+  defp parse_validation_result(text) do
+    trimmed = String.trim(text)
+    upper = String.upcase(trimmed)
+
+    cond do
+      upper in ["NOT_TRANSLATED", "NOT TRANSLATED"] -> {:ok, :not_translated}
+      upper == "TRANSLATED" -> {:ok, :translated}
+      upper == "AMBIGUOUS" -> {:ok, :ambiguous}
+      trimmed in ["번역되지 않음", "번역 안됨"] -> {:ok, :not_translated}
+      trimmed in ["번역됨"] -> {:ok, :translated}
+      trimmed in ["모호함"] -> {:ok, :ambiguous}
+      true -> {:ok, :ambiguous}
+    end
+  end
 
   defp serialize_response([%Message{} = first | _]), do: serialize_response(first)
 

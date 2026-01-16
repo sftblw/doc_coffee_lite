@@ -9,20 +9,22 @@ defmodule DocCoffeeLite.Translation.DirtyFilterTest do
       group = DocCoffeeLite.TranslationFixtures.translation_group_fixture(project_id: project.id)
 
       # Create dirty unit
-      dirty_unit = DocCoffeeLite.TranslationFixtures.translation_unit_fixture(
-        translation_group_id: group.id,
-        is_dirty: true,
-        source_text: "Dirty",
-        unit_key: "dirty_1"
-      )
+      dirty_unit =
+        DocCoffeeLite.TranslationFixtures.translation_unit_fixture(
+          translation_group_id: group.id,
+          is_dirty: true,
+          source_text: "Dirty",
+          unit_key: "dirty_1"
+        )
 
       # Create clean unit
-      _clean_unit = DocCoffeeLite.TranslationFixtures.translation_unit_fixture(
-        translation_group_id: group.id,
-        is_dirty: false,
-        source_text: "Clean",
-        unit_key: "clean_1"
-      )
+      _clean_unit =
+        DocCoffeeLite.TranslationFixtures.translation_unit_fixture(
+          translation_group_id: group.id,
+          is_dirty: false,
+          source_text: "Clean",
+          unit_key: "clean_1"
+        )
 
       # Default (no filter)
       all_units = Translation.list_units_for_review(project.id)
