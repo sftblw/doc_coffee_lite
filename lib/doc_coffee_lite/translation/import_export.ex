@@ -196,39 +196,44 @@ defmodule DocCoffeeLite.Translation.ImportExport do
           unit_key = entry["unit_key"]
           source_hash = entry["source_hash"]
 
-          # Find unit by key
-          unit =
-            Repo.one(
+          units =
+            Repo.all(
               from u in TranslationUnit,
                 join: g in assoc(u, :translation_group),
                 where: g.project_id == ^project.id and u.unit_key == ^unit_key
             )
 
-          cond do
-            is_nil(unit) ->
+          matching_units =
+            if is_binary(source_hash) do
+              Enum.filter(units, &(&1.source_hash == source_hash))
+            else
+              units
+            end
+
+          case matching_units do
+            [] ->
               %{acc | skipped: acc.skipped + 1}
 
-            is_binary(source_hash) and unit.source_hash != source_hash ->
-              %{acc | skipped: acc.skipped + 1}
-
-            true ->
+            _ ->
               # Create BlockTranslation
-              {:ok, _} =
-                Translation.create_block_translation(%{
-                  translation_unit_id: unit.id,
-                  translation_run_id: nil,
-                  translated_text: entry["translated_text"],
-                  translated_markup: entry["translated_markup"] || entry["translated_text"],
-                  metadata: %{"source" => "import"}
+              Enum.reduce(matching_units, acc, fn unit, acc_inner ->
+                {:ok, _} =
+                  Translation.create_block_translation(%{
+                    translation_unit_id: unit.id,
+                    translation_run_id: nil,
+                    translated_text: entry["translated_text"],
+                    translated_markup: entry["translated_markup"] || entry["translated_text"],
+                    metadata: %{"source" => "import"}
+                  })
+
+                # Mark as translated
+                Translation.update_translation_unit(unit, %{
+                  status: "translated",
+                  is_dirty: entry["is_dirty"] || false
                 })
 
-              # Mark as translated
-              Translation.update_translation_unit(unit, %{
-                status: "translated",
-                is_dirty: entry["is_dirty"] || false
-              })
-
-              %{acc | count: acc.count + 1}
+                %{acc_inner | count: acc_inner.count + 1}
+              end)
           end
         end)
       end)
