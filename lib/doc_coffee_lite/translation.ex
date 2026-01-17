@@ -740,6 +740,45 @@ defmodule DocCoffeeLite.Translation do
     end)
   end
 
+  def check_project_integrity(project_id) do
+    run = get_latest_run(project_id)
+    run_id = if run, do: run.id, else: nil
+
+    units =
+      Repo.all(
+        from u in TranslationUnit,
+          join: g in assoc(u, :translation_group),
+          where: g.project_id == ^project_id
+      )
+
+    unit_ids = Enum.map(units, & &1.id)
+    units_by_id = Map.new(units, &{&1.id, &1})
+    run_translations = fetch_run_translations(run_id, unit_ids)
+    latest_translations = fetch_latest_translations_for_units(unit_ids)
+
+    result =
+      Repo.transaction(
+        fn ->
+          Enum.reduce(unit_ids, base_integrity_report(unit_ids), fn unit_id, acc ->
+            unit = Map.get(units_by_id, unit_id)
+            run_bt = Map.get(run_translations, unit_id)
+            latest_bt = Map.get(latest_translations, unit_id)
+
+            {acc, target_bt} =
+              sync_run_translation(run_id, unit, run_bt, latest_bt, acc)
+
+            maybe_repair_markup(target_bt, unit, acc)
+          end)
+        end,
+        timeout: :infinity
+      )
+
+    case result do
+      {:ok, report} -> {:ok, report}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp update_project_settings(project_id, updater) when is_function(updater, 1) do
     case Repo.get(Project, project_id) do
       %Project{} = project ->
@@ -780,6 +819,92 @@ defmodule DocCoffeeLite.Translation do
     )
   end
 
+  defp base_integrity_report(unit_ids) do
+    %{
+      unit_count: length(unit_ids),
+      missing: 0,
+      synced: 0,
+      repaired_markup: 0
+    }
+  end
+
+  defp sync_run_translation(nil, _unit, _run_bt, latest_bt, acc) do
+    {acc, latest_bt}
+  end
+
+  defp sync_run_translation(run_id, unit, run_bt, latest_bt, acc) do
+    cond do
+      is_nil(run_bt) and is_nil(latest_bt) ->
+        {bump_integrity(acc, :missing), nil}
+
+      is_nil(run_bt) ->
+        case copy_translation_to_run(run_id, unit, latest_bt, "integrity_copy") do
+          {:ok, bt} -> {bump_integrity(acc, :synced), bt}
+          _ -> {acc, latest_bt}
+        end
+
+      translation_newer?(latest_bt, run_bt) ->
+        case copy_translation_to_run(run_id, unit, latest_bt, "integrity_sync") do
+          {:ok, bt} -> {bump_integrity(acc, :synced), bt}
+          _ -> {acc, run_bt}
+        end
+
+      true ->
+        {acc, run_bt}
+    end
+  end
+
+  defp translation_newer?(nil, _run_bt), do: false
+
+  defp translation_newer?(latest_bt, run_bt) do
+    latest_ts = translation_timestamp(latest_bt)
+    run_ts = translation_timestamp(run_bt)
+
+    case DateTime.compare(latest_ts, run_ts) do
+      :gt -> true
+      :lt -> false
+      :eq -> latest_bt.id > run_bt.id
+    end
+  end
+
+  defp translation_timestamp(%BlockTranslation{} = bt) do
+    bt.updated_at || bt.inserted_at
+  end
+
+  defp maybe_repair_markup(nil, _unit, acc), do: acc
+
+  defp maybe_repair_markup(%BlockTranslation{} = bt, unit, acc) do
+    if markup_missing?(bt) and text_present?(bt) do
+      placeholders = bt.placeholders || unit.placeholders || %{}
+
+      case update_block_translation(bt, %{
+             translated_text: bt.translated_text,
+             placeholders: placeholders
+           }) do
+        {:ok, _} -> bump_integrity(acc, :repaired_markup)
+        _ -> acc
+      end
+    else
+      acc
+    end
+  end
+
+  defp markup_missing?(%BlockTranslation{translated_markup: nil}), do: true
+
+  defp markup_missing?(%BlockTranslation{translated_markup: markup}) do
+    String.trim(markup) == ""
+  end
+
+  defp text_present?(%BlockTranslation{translated_text: nil}), do: false
+
+  defp text_present?(%BlockTranslation{translated_text: text}) do
+    String.trim(text) != ""
+  end
+
+  defp bump_integrity(acc, key) do
+    Map.update(acc, key, 1, &(&1 + 1))
+  end
+
   defp prepare_bulk_replace_translations(project_id, unit_ids) do
     run = get_latest_run(project_id)
     run_id = if run, do: run.id, else: nil
@@ -801,6 +926,21 @@ defmodule DocCoffeeLite.Translation do
     Repo.all(
       from b in BlockTranslation,
         where: b.translation_run_id == ^run_id and b.translation_unit_id in ^unit_ids
+    )
+    |> Map.new(&{&1.translation_unit_id, &1})
+  end
+
+  defp fetch_latest_translations_for_units(unit_ids) do
+    Repo.all(
+      from b in BlockTranslation,
+        where: b.translation_unit_id in ^unit_ids,
+        distinct: b.translation_unit_id,
+        order_by: [
+          asc: b.translation_unit_id,
+          desc: b.updated_at,
+          desc: b.inserted_at,
+          desc: b.id
+        ]
     )
     |> Map.new(&{&1.translation_unit_id, &1})
   end
@@ -871,6 +1011,42 @@ defmodule DocCoffeeLite.Translation do
       on_conflict: {:replace_all_except, [:id, :inserted_at]},
       conflict_target: [:translation_run_id, :translation_unit_id]
     )
+  end
+
+  defp copy_translation_to_run(run_id, unit, %BlockTranslation{} = bt, source) do
+    placeholders = bt.placeholders || unit.placeholders || %{}
+    translated_text = bt.translated_text || ""
+
+    translated_markup =
+      if markup_missing?(bt) and text_present?(bt) do
+        Placeholder.restore(translated_text, placeholders)
+      else
+        bt.translated_markup
+      end
+
+    if String.trim(translated_text) == "" and
+         (translated_markup == nil or translated_markup == "") do
+      {:error, :empty_translation}
+    else
+      attrs = %{
+        translation_run_id: run_id,
+        translation_unit_id: unit.id,
+        status: bt.status || "edited",
+        translated_text: translated_text,
+        translated_markup: translated_markup,
+        placeholders: placeholders,
+        llm_response: bt.llm_response || %{},
+        metrics: bt.metrics || %{},
+        metadata: Map.put(bt.metadata || %{}, "source", source)
+      }
+
+      %BlockTranslation{}
+      |> BlockTranslation.changeset(attrs)
+      |> Repo.insert(
+        on_conflict: {:replace_all_except, [:id, :inserted_at]},
+        conflict_target: [:translation_run_id, :translation_unit_id]
+      )
+    end
   end
 
   def get_translation_run!(id), do: Repo.get!(TranslationRun, id)

@@ -192,6 +192,26 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
     end
   end
 
+  @impl true
+  def handle_event("check_integrity", _params, socket) do
+    project = socket.assigns.project
+
+    with %Project{} <- project,
+         {:ok, report} <- Translation.check_project_integrity(project.id) do
+      message =
+        "Integrity check: synced #{report.synced}, repaired #{report.repaired_markup}, " <>
+          "missing #{report.missing} (#{report.unit_count} units)."
+
+      {:noreply, socket |> put_flash(:info, message) |> reload_project()}
+    else
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Integrity check failed: #{inspect(reason)}")}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, "Integrity check failed.")}
+    end
+  end
+
   def handle_event("validate_import", _params, socket) do
     {:noreply, socket}
   end
@@ -240,294 +260,307 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
 
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen bg-[#f6f1ea] text-stone-900">
-      <div class="mx-auto max-w-5xl px-6 pb-16 pt-10">
-        <header id="project-header" class="flex flex-wrap items-start justify-between gap-6">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-stone-400">
-                Project
-              </span>
-              <span
-                :if={@project}
-                class="rounded bg-stone-200/50 px-1.5 py-0.5 text-[9px] font-black text-stone-500"
-              >
-                ID: #{@project.id}
-              </span>
-            </div>
-
-            <%= if @editing_title do %>
-              <form phx-submit="save_title" class="flex items-center gap-2">
-                <input
-                  type="text"
-                  name="title"
-                  value={project_title(@project)}
-                  autofocus
-                  class="block w-full max-w-lg rounded-xl border-stone-300 bg-white/50 text-2xl font-display focus:border-indigo-500 focus:ring-indigo-500 py-1"
-                />
-                <button
-                  type="submit"
-                  class="rounded-full bg-stone-900 p-2 text-white hover:bg-stone-800"
-                >
-                  <.icon name="hero-check" class="size-4" />
-                </button>
-                <button
-                  type="button"
-                  phx-click="cancel_edit_title"
-                  class="rounded-full bg-white p-2 text-stone-400 hover:text-stone-600 ring-1 ring-stone-200"
-                >
-                  <.icon name="hero-x-mark" class="size-4" />
-                </button>
-              </form>
-            <% else %>
-              <div class="group flex items-center gap-3">
-                <h1 class="font-display text-3xl text-stone-900 sm:text-4xl truncate">
-                  {project_title(@project)}
-                </h1>
-                <button
-                  phx-click="edit_title"
-                  class="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-stone-400 hover:text-indigo-500"
-                >
-                  <.icon name="hero-pencil-square" class="size-5" />
-                </button>
-              </div>
-            <% end %>
-
-            <p class="mt-2 text-sm text-stone-600">
-              Status:
-              <span class="font-semibold">
-                {ProjectFormatter.status_label(project_status(@project))}
-              </span>
-
-              <span :if={latest_run(@project)} class="ml-3 text-stone-400">
-                Run: {ProjectFormatter.status_label(run_status(latest_run(@project)))}
-              </span>
-            </p>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2">
-            
-    <!-- Start/Pause Group -->
-
-            <button
-              :if={@project && can_start?(@project, latest_run(@project))}
-              phx-click="start"
-              class="rounded-full bg-stone-900 px-5 py-2 text-xs font-bold text-white uppercase shadow-md hover:bg-stone-800 transition-colors flex items-center gap-2"
-              title="Start Translation"
-            >
-              <.icon name="hero-play" class="size-4" /> Start
-            </button>
-
-            <button
-              :if={@project && can_pause?(latest_run(@project))}
-              phx-click="pause"
-              class="rounded-full border-2 border-stone-200 bg-white px-5 py-2 text-xs font-bold uppercase shadow-sm hover:bg-stone-50 transition-colors flex items-center gap-2"
-              title="Pause Translation"
-            >
-              <.icon name="hero-pause" class="size-4" /> Pause
-            </button>
-            
-    <!-- Download (Visible if ready) -->
-
-            <.link
-              :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
-              id="project-download"
-              href={download_path(@project)}
-              class="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-700 shadow-sm transition hover:bg-stone-50"
-              title="Download EPUB"
-            >
-              <.icon name="hero-arrow-down-tray" class="size-4" /> Download
-            </.link>
-
-            <div class="w-px h-6 bg-stone-300 mx-2"></div>
-            
-    <!-- Secondary Actions -->
-
-            <button
-              :if={@project && latest_run(@project)}
-              phx-click="heal_project"
-              class="p-2 text-stone-400 hover:text-indigo-600 transition-colors rounded-full hover:bg-indigo-50"
-              title="Heal Structure"
-            >
-              <.icon name="hero-wrench-screwdriver" class="size-5" />
-            </button>
-
-            <button
-              :if={@project}
-              phx-click="reset_project"
-              data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
-              class="p-2 text-stone-400 hover:text-rose-600 transition-colors rounded-full hover:bg-rose-50"
-              title="Reset Progress"
-            >
-              <.icon name="hero-arrow-path" class="size-5" />
-            </button>
-
-            <button
-              :if={@project}
-              phx-click="delete_project"
-              data-confirm="Delete this project and all associated data? This cannot be undone."
-              class="p-2 text-stone-400 hover:text-rose-600 transition-colors rounded-full hover:bg-rose-50"
-              title="Delete Project"
-            >
-              <.icon name="hero-trash" class="size-5" />
-            </button>
-            
-    <!-- Back Button -->
-
-            <.link
-              navigate={~p"/"}
-              class="p-2 text-stone-400 hover:text-stone-600 transition-colors rounded-full hover:bg-stone-100 ml-2"
-              title="Back to Projects"
-            >
-              <.icon name="hero-arrow-left" class="size-5" />
-            </.link>
-          </div>
-        </header>
-
-        <section
-          id="project-summary"
-          class="mt-10 rounded-3xl border border-stone-200/70 bg-white/80 p-6 shadow-sm"
-        >
-          <%= if @project do %>
-            <div class="grid gap-4 sm:grid-cols-3">
-              <div>
-                <p class="text-xs font-semibold uppercase text-stone-400">Format</p>
-
-                <p class="mt-2 text-sm font-semibold">{source_format(@project)}</p>
-              </div>
-
-              <div>
-                <p class="text-xs font-semibold uppercase text-stone-400">Languages</p>
-
-                <p class="mt-2 text-sm font-semibold">
-                  {ProjectFormatter.lang_label(@project.source_lang)} → {ProjectFormatter.lang_label(
-                    @project.target_lang
-                  )}
-                </p>
-              </div>
-
-              <div>
-                <p class="text-xs font-semibold uppercase text-stone-400">Progress</p>
-
-                <p class="mt-2 text-sm font-semibold">
-                  {ProjectFormatter.normalize_progress(@project.progress)}%
-                  <span class="ml-1 text-xs font-medium text-stone-400">
-                    ({@completed_count} / {@total_count})
-                  </span>
-                </p>
-
-                <p
-                  :if={@project.status == "running" && @eta}
-                  class="mt-1 text-[0.65rem] text-amber-600 font-medium"
-                >
-                  ETA: {@eta}
-                </p>
-              </div>
-            </div>
-          <% else %>
-            <p class="text-sm text-stone-600">No project loaded.</p>
-          <% end %>
-        </section>
-
-        <section id="data-management" class="mt-10">
-          <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400 mb-4">
-            Data Management
-          </h2>
-          <div class="grid gap-6 md:grid-cols-2">
-            <div class="rounded-2xl border border-stone-200 bg-white p-6">
-              <h3 class="font-bold text-stone-900">Export Project Data</h3>
-              <p class="mt-2 text-xs text-stone-500">
-                Download a ZIP archive containing the source file and all current translations (YAML).
-              </p>
-              <div class="mt-6">
-                <.link
-                  href={~p"/projects/#{@project.id}/export"}
-                  class="inline-flex items-center gap-2 rounded-lg bg-white border border-stone-300 px-4 py-2 text-xs font-bold uppercase text-stone-700 hover:bg-stone-50 transition-colors"
-                >
-                  <.icon name="hero-arrow-down-tray" class="size-4" /> Export Data
-                </.link>
-              </div>
-            </div>
-
-            <div class="rounded-2xl border border-stone-200 bg-white p-6">
-              <h3 class="font-bold text-stone-900">Import / Update Translations</h3>
-              <p class="mt-2 text-xs text-stone-500">
-                Upload an exported ZIP file to merge translations.
-                <span class="block text-rose-500 mt-1 font-semibold">
-                  * Must match the current source document.
+    <Layouts.app flash={@flash}>
+      <div class="min-h-screen bg-[#f6f1ea] text-stone-900">
+        <div class="mx-auto max-w-5xl px-6 pb-16 pt-10">
+          <header id="project-header" class="flex flex-wrap items-start justify-between gap-6">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-stone-400">
+                  Project
                 </span>
-              </p>
-              <form phx-submit="import_update" phx-change="validate_import" class="mt-4">
-                <div class="flex items-center gap-4">
-                  <.live_file_input upload={@uploads.import_file} class="text-xs" />
+                <span
+                  :if={@project}
+                  class="rounded bg-stone-200/50 px-1.5 py-0.5 text-[9px] font-black text-stone-500"
+                >
+                  ID: #{@project.id}
+                </span>
+              </div>
+
+              <%= if @editing_title do %>
+                <form phx-submit="save_title" class="flex items-center gap-2">
+                  <input
+                    type="text"
+                    name="title"
+                    value={project_title(@project)}
+                    autofocus
+                    class="block w-full max-w-lg rounded-xl border-stone-300 bg-white/50 text-2xl font-display focus:border-indigo-500 focus:ring-indigo-500 py-1"
+                  />
                   <button
                     type="submit"
-                    class="rounded-lg bg-stone-900 px-4 py-2 text-xs font-bold uppercase text-white hover:bg-stone-800 disabled:opacity-50"
-                    disabled={@uploads.import_file.entries == []}
+                    class="rounded-full bg-stone-900 p-2 text-white hover:bg-stone-800"
                   >
-                    Import
+                    <.icon name="hero-check" class="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="cancel_edit_title"
+                    class="rounded-full bg-white p-2 text-stone-400 hover:text-stone-600 ring-1 ring-stone-200"
+                  >
+                    <.icon name="hero-x-mark" class="size-4" />
+                  </button>
+                </form>
+              <% else %>
+                <div class="group flex items-center gap-3">
+                  <h1 class="font-display text-3xl text-stone-900 sm:text-4xl truncate">
+                    {project_title(@project)}
+                  </h1>
+                  <button
+                    phx-click="edit_title"
+                    class="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-stone-400 hover:text-indigo-500"
+                  >
+                    <.icon name="hero-pencil-square" class="size-5" />
                   </button>
                 </div>
-                <%= for entry <- @uploads.import_file.entries do %>
-                  <div class="mt-2 text-xs text-stone-500">
-                    {entry.client_name} - {entry.progress}%
-                    <%= for err <- upload_errors(@uploads.import_file, entry) do %>
-                      <span class="text-rose-500">{to_string(err)}</span>
-                    <% end %>
+              <% end %>
+
+              <p class="mt-2 text-sm text-stone-600">
+                Status:
+                <span class="font-semibold">
+                  {ProjectFormatter.status_label(project_status(@project))}
+                </span>
+
+                <span :if={latest_run(@project)} class="ml-3 text-stone-400">
+                  Run: {ProjectFormatter.status_label(run_status(latest_run(@project)))}
+                </span>
+              </p>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              
+    <!-- Start/Pause Group -->
+
+              <button
+                :if={@project && can_start?(@project, latest_run(@project))}
+                phx-click="start"
+                class="rounded-full bg-stone-900 px-5 py-2 text-xs font-bold text-white uppercase shadow-md hover:bg-stone-800 transition-colors flex items-center gap-2"
+                title="Start Translation"
+              >
+                <.icon name="hero-play" class="size-4" /> Start
+              </button>
+
+              <button
+                :if={@project && can_pause?(latest_run(@project))}
+                phx-click="pause"
+                class="rounded-full border-2 border-stone-200 bg-white px-5 py-2 text-xs font-bold uppercase shadow-sm hover:bg-stone-50 transition-colors flex items-center gap-2"
+                title="Pause Translation"
+              >
+                <.icon name="hero-pause" class="size-4" /> Pause
+              </button>
+              
+    <!-- Download (Visible if ready) -->
+
+              <.link
+                :if={@project && latest_run(@project) && run_status(latest_run(@project)) == "ready"}
+                id="project-download"
+                href={download_path(@project)}
+                class="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-700 shadow-sm transition hover:bg-stone-50"
+                title="Download EPUB"
+              >
+                <.icon name="hero-arrow-down-tray" class="size-4" /> Download
+              </.link>
+
+              <div class="w-px h-6 bg-stone-300 mx-2"></div>
+              
+    <!-- Secondary Actions -->
+
+              <button
+                :if={@project && latest_run(@project)}
+                phx-click="heal_project"
+                id="project-heal"
+                class="p-2 text-stone-400 hover:text-indigo-600 transition-colors rounded-full hover:bg-indigo-50"
+                title="Heal Structure"
+              >
+                <.icon name="hero-wrench-screwdriver" class="size-5" />
+              </button>
+
+              <button
+                :if={@project}
+                id="project-integrity-check"
+                phx-click="check_integrity"
+                class="p-2 text-stone-400 hover:text-emerald-600 transition-colors rounded-full hover:bg-emerald-50"
+                title="Check Export Integrity"
+              >
+                <.icon name="hero-check-circle" class="size-5" />
+              </button>
+
+              <button
+                :if={@project}
+                phx-click="reset_project"
+                data-confirm="Are you absolutely sure? This will PERMANENTLY DELETE all translations and progress for this project."
+                class="p-2 text-stone-400 hover:text-rose-600 transition-colors rounded-full hover:bg-rose-50"
+                title="Reset Progress"
+              >
+                <.icon name="hero-arrow-path" class="size-5" />
+              </button>
+
+              <button
+                :if={@project}
+                phx-click="delete_project"
+                data-confirm="Delete this project and all associated data? This cannot be undone."
+                class="p-2 text-stone-400 hover:text-rose-600 transition-colors rounded-full hover:bg-rose-50"
+                title="Delete Project"
+              >
+                <.icon name="hero-trash" class="size-5" />
+              </button>
+              
+    <!-- Back Button -->
+
+              <.link
+                navigate={~p"/"}
+                class="p-2 text-stone-400 hover:text-stone-600 transition-colors rounded-full hover:bg-stone-100 ml-2"
+                title="Back to Projects"
+              >
+                <.icon name="hero-arrow-left" class="size-5" />
+              </.link>
+            </div>
+          </header>
+
+          <section
+            id="project-summary"
+            class="mt-10 rounded-3xl border border-stone-200/70 bg-white/80 p-6 shadow-sm"
+          >
+            <%= if @project do %>
+              <div class="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <p class="text-xs font-semibold uppercase text-stone-400">Format</p>
+
+                  <p class="mt-2 text-sm font-semibold">{source_format(@project)}</p>
+                </div>
+
+                <div>
+                  <p class="text-xs font-semibold uppercase text-stone-400">Languages</p>
+
+                  <p class="mt-2 text-sm font-semibold">
+                    {ProjectFormatter.lang_label(@project.source_lang)} → {ProjectFormatter.lang_label(
+                      @project.target_lang
+                    )}
+                  </p>
+                </div>
+
+                <div>
+                  <p class="text-xs font-semibold uppercase text-stone-400">Progress</p>
+
+                  <p class="mt-2 text-sm font-semibold">
+                    {ProjectFormatter.normalize_progress(@project.progress)}%
+                    <span class="ml-1 text-xs font-medium text-stone-400">
+                      ({@completed_count} / {@total_count})
+                    </span>
+                  </p>
+
+                  <p
+                    :if={@project.status == "running" && @eta}
+                    class="mt-1 text-[0.65rem] text-amber-600 font-medium"
+                  >
+                    ETA: {@eta}
+                  </p>
+                </div>
+              </div>
+            <% else %>
+              <p class="text-sm text-stone-600">No project loaded.</p>
+            <% end %>
+          </section>
+
+          <section id="data-management" class="mt-10">
+            <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400 mb-4">
+              Data Management
+            </h2>
+            <div class="grid gap-6 md:grid-cols-2">
+              <div class="rounded-2xl border border-stone-200 bg-white p-6">
+                <h3 class="font-bold text-stone-900">Export Project Data</h3>
+                <p class="mt-2 text-xs text-stone-500">
+                  Download a ZIP archive containing the source file and all current translations (YAML).
+                </p>
+                <div class="mt-6">
+                  <.link
+                    href={~p"/projects/#{@project.id}/export"}
+                    class="inline-flex items-center gap-2 rounded-lg bg-white border border-stone-300 px-4 py-2 text-xs font-bold uppercase text-stone-700 hover:bg-stone-50 transition-colors"
+                  >
+                    <.icon name="hero-arrow-down-tray" class="size-4" /> Export Data
+                  </.link>
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-stone-200 bg-white p-6">
+                <h3 class="font-bold text-stone-900">Import / Update Translations</h3>
+                <p class="mt-2 text-xs text-stone-500">
+                  Upload an exported ZIP file to merge translations.
+                  <span class="block text-rose-500 mt-1 font-semibold">
+                    * Must match the current source document.
+                  </span>
+                </p>
+                <form phx-submit="import_update" phx-change="validate_import" class="mt-4">
+                  <div class="flex items-center gap-4">
+                    <.live_file_input upload={@uploads.import_file} class="text-xs" />
+                    <button
+                      type="submit"
+                      class="rounded-lg bg-stone-900 px-4 py-2 text-xs font-bold uppercase text-white hover:bg-stone-800 disabled:opacity-50"
+                      disabled={@uploads.import_file.entries == []}
+                    >
+                      Import
+                    </button>
+                  </div>
+                  <%= for entry <- @uploads.import_file.entries do %>
+                    <div class="mt-2 text-xs text-stone-500">
+                      {entry.client_name} - {entry.progress}%
+                      <%= for err <- upload_errors(@uploads.import_file, entry) do %>
+                        <span class="text-rose-500">{to_string(err)}</span>
+                      <% end %>
+                    </div>
+                  <% end %>
+                </form>
+              </div>
+            </div>
+          </section>
+
+          <section :if={@project} id="recent-activity" class="mt-10">
+            <div class="flex items-center justify-between">
+              <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400">
+                Recent Activity
+              </h2>
+              <.link
+                navigate={~p"/projects/#{@project.id}/translations"}
+                class="text-xs font-bold uppercase tracking-widest text-indigo-500 hover:text-indigo-600 transition-colors"
+              >
+                View All Translation
+              </.link>
+            </div>
+
+            <%= if @recent_translations == [] do %>
+              <div class="mt-4 rounded-2xl border border-dashed border-stone-200 bg-white/60 p-4 text-xs text-stone-500">
+                No recent translations yet. Use the review page to browse all translated units.
+              </div>
+            <% else %>
+              <div class="mt-4 space-y-3">
+                <%= for trans <- @recent_translations do %>
+                  <div class="group relative rounded-2xl border border-stone-200/60 bg-white/50 p-4 transition hover:bg-white">
+                    <div class="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p class="text-[0.65rem] font-bold uppercase text-stone-400">Source</p>
+
+                        <div class="mt-1 text-xs text-stone-600 line-clamp-3">
+                          {trans.translation_unit.source_text}
+                        </div>
+                      </div>
+
+                      <div>
+                        <p class="text-[0.65rem] font-bold uppercase text-emerald-600">
+                          Translation
+                        </p>
+
+                        <div class="mt-1 text-xs text-stone-900 font-medium line-clamp-3">
+                          {trans.translated_text}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 <% end %>
-              </form>
-            </div>
-          </div>
-        </section>
-
-        <section :if={@project} id="recent-activity" class="mt-10">
-          <div class="flex items-center justify-between">
-            <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-400">
-              Recent Activity
-            </h2>
-            <.link
-              navigate={~p"/projects/#{@project.id}/translations"}
-              class="text-xs font-bold uppercase tracking-widest text-indigo-500 hover:text-indigo-600 transition-colors"
-            >
-              View All Translation
-            </.link>
-          </div>
-
-          <%= if @recent_translations == [] do %>
-            <div class="mt-4 rounded-2xl border border-dashed border-stone-200 bg-white/60 p-4 text-xs text-stone-500">
-              No recent translations yet. Use the review page to browse all translated units.
-            </div>
-          <% else %>
-            <div class="mt-4 space-y-3">
-              <%= for trans <- @recent_translations do %>
-                <div class="group relative rounded-2xl border border-stone-200/60 bg-white/50 p-4 transition hover:bg-white">
-                  <div class="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <p class="text-[0.65rem] font-bold uppercase text-stone-400">Source</p>
-
-                      <div class="mt-1 text-xs text-stone-600 line-clamp-3">
-                        {trans.translation_unit.source_text}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p class="text-[0.65rem] font-bold uppercase text-emerald-600">
-                        Translation
-                      </p>
-
-                      <div class="mt-1 text-xs text-stone-900 font-medium line-clamp-3">
-                        {trans.translated_text}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              <% end %>
-            </div>
-          <% end %>
-        </section>
+              </div>
+            <% end %>
+          </section>
+        </div>
       </div>
-    </div>
+    </Layouts.app>
     """
   end
 
