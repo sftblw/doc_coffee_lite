@@ -667,15 +667,18 @@ defmodule DocCoffeeLite.Translation do
     {run_id, run_translations, fallback_translations} =
       prepare_bulk_replace_translations(project_id, unit_ids)
 
-    Repo.transaction(fn ->
-      Enum.each(units, fn unit ->
-        bt =
-          Map.get(run_translations, unit.id) ||
-            Map.get(fallback_translations, unit.id)
+    result =
+      Repo.transaction(fn ->
+        Enum.each(units, fn unit ->
+          bt =
+            Map.get(run_translations, unit.id) ||
+              Map.get(fallback_translations, unit.id)
 
-        replace_translation_for_run(run_id, unit, bt, find_str, replace_str)
+          replace_translation_for_run(run_id, unit, bt, find_str, replace_str)
+        end)
       end)
-    end)
+
+    result
   end
 
   def get_latest_translation(unit) do
@@ -710,6 +713,71 @@ defmodule DocCoffeeLite.Translation do
       true ->
         attrs
     end
+  end
+
+  def export_dirty?(project_id) do
+    last_exported_at = project_last_exported_at(project_id)
+    latest_translation_at = project_latest_translation_at(project_id)
+
+    cond do
+      is_nil(latest_translation_at) ->
+        false
+
+      is_nil(last_exported_at) ->
+        true
+
+      DateTime.compare(latest_translation_at, last_exported_at) == :gt ->
+        true
+
+      true ->
+        false
+    end
+  end
+
+  def mark_project_exported(project_id) do
+    update_project_settings(project_id, fn settings ->
+      Map.put(settings, "last_exported_at", DateTime.utc_now() |> DateTime.to_iso8601())
+    end)
+  end
+
+  defp update_project_settings(project_id, updater) when is_function(updater, 1) do
+    case Repo.get(Project, project_id) do
+      %Project{} = project ->
+        settings = project.settings || %{}
+        new_settings = updater.(settings)
+
+        if new_settings == settings do
+          {:ok, project}
+        else
+          update_project(project, %{settings: new_settings})
+        end
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  defp project_last_exported_at(project_id) do
+    case Repo.get(Project, project_id) do
+      %Project{settings: %{"last_exported_at" => iso}} when is_binary(iso) ->
+        case DateTime.from_iso8601(iso) do
+          {:ok, datetime, _offset} -> datetime
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp project_latest_translation_at(project_id) do
+    Repo.one(
+      from bt in BlockTranslation,
+        join: u in assoc(bt, :translation_unit),
+        join: g in assoc(u, :translation_group),
+        where: g.project_id == ^project_id,
+        select: max(bt.updated_at)
+    )
   end
 
   defp prepare_bulk_replace_translations(project_id, unit_ids) do

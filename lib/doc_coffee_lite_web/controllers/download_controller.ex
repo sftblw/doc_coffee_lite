@@ -19,8 +19,12 @@ defmodule DocCoffeeLiteWeb.DownloadController do
     path = Path.join(System.tmp_dir!(), "export-#{run.id}.epub")
 
     case Export.export_epub(run.id, path) do
-      :ok -> send_download(conn, {:file, path}, filename: filename)
-      {:error, reason} -> send_resp(conn, 500, "Export failed: #{inspect(reason)}")
+      :ok ->
+        _ = Translation.mark_project_exported(project.id)
+        send_download(conn, {:file, path}, filename: filename)
+
+      {:error, reason} ->
+        send_resp(conn, 500, "Export failed: #{inspect(reason)}")
     end
   end
 end
