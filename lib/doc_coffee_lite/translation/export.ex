@@ -107,15 +107,8 @@ defmodule DocCoffeeLite.Translation.Export do
                       {node, count}
 
                     markup ->
-                      case Floki.parse_fragment(markup) do
-                        {:ok, [new_node | _]} ->
-                          # Important: remove the marker attribute from the new node!
-                          cleaned_node = strip_marker(new_node)
-                          {cleaned_node, count + 1}
-
-                        _ ->
-                          {node, count}
-                      end
+                      {updated_node, replaced?} = replace_node(node, markup)
+                      {updated_node, if(replaced?, do: count + 1, else: count)}
                   end
 
                 nil ->
@@ -132,6 +125,51 @@ defmodule DocCoffeeLite.Translation.Export do
       {:error, r} ->
         {:error, r}
     end
+  end
+
+  defp replace_node({tag, _attrs, _children} = node, markup) do
+    case parse_translated_markup(markup) do
+      {:ok, nodes} ->
+        updated =
+          case nodes do
+            [{new_tag, _new_attrs, _new_children} = new_node] ->
+              if to_string(new_tag) == to_string(tag) do
+                # Keep the translated tag if it matches the source wrapper.
+                strip_marker(new_node)
+              else
+                # Preserve the original wrapper and use translated nodes as children.
+                replace_children(node, nodes)
+              end
+
+            _ ->
+              replace_children(node, nodes)
+          end
+
+        {updated, true}
+
+      {:error, _} ->
+        # Fall back to text content so the export remains valid XML.
+        {replace_children(node, [markup]), true}
+    end
+  end
+
+  defp parse_translated_markup(markup) do
+    case Floki.parse_fragment(markup) do
+      {:ok, nodes} ->
+        {:ok, nodes}
+
+      {:error, _} ->
+        markup = escape_loose_angles(markup)
+        Floki.parse_fragment(markup)
+    end
+  end
+
+  defp escape_loose_angles(markup) do
+    String.replace(markup, ~r|<(?![A-Za-z/!?])|, "&lt;")
+  end
+
+  defp replace_children({tag, attrs, _children}, new_children) do
+    {tag, List.keydelete(attrs, "data-unit-id", 0), new_children}
   end
 
   defp strip_marker({tag, attrs, children}) do
