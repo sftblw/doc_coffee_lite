@@ -71,18 +71,20 @@ defmodule DocCoffeeLite.Translation.Export do
     unit_ids = Enum.map(units, & &1.id)
 
     translations =
-      Repo.all(
-        from b in BlockTranslation,
-          where: b.translation_run_id == ^run_id and b.translation_unit_id in ^unit_ids
-      )
+      run_id
+      |> fetch_run_translations(unit_ids)
+      |> add_fallback_translations(unit_ids)
 
     # Map by unit_key (which contains the data-unit-id marker)
     units_map = Map.new(units, &{&1.id, &1})
 
     trans_map =
-      Map.new(translations, fn b ->
-        unit = Map.get(units_map, b.translation_unit_id)
-        {unit.unit_key, b.translated_markup}
+      translations
+      |> Enum.reduce(%{}, fn b, acc ->
+        case Map.get(units_map, b.translation_unit_id) do
+          %TranslationUnit{} = unit -> Map.put(acc, unit.unit_key, b.translated_markup)
+          _ -> acc
+        end
       end)
 
     full_path = Path.join(work_dir, group.group_key)
@@ -177,4 +179,43 @@ defmodule DocCoffeeLite.Translation.Export do
   end
 
   defp strip_marker(node), do: node
+
+  defp fetch_run_translations(nil, _unit_ids), do: []
+
+  defp fetch_run_translations(run_id, unit_ids) do
+    Repo.all(
+      from b in BlockTranslation,
+        where: b.translation_run_id == ^run_id and b.translation_unit_id in ^unit_ids
+    )
+  end
+
+  defp add_fallback_translations(run_translations, unit_ids) do
+    missing_unit_ids =
+      unit_ids
+      |> Enum.reject(&translation_present?(&1, run_translations))
+
+    if missing_unit_ids == [] do
+      run_translations
+    else
+      run_translations ++ fetch_latest_translations(missing_unit_ids)
+    end
+  end
+
+  defp translation_present?(unit_id, translations) do
+    Enum.any?(translations, &(&1.translation_unit_id == unit_id))
+  end
+
+  defp fetch_latest_translations(unit_ids) do
+    Repo.all(
+      from b in BlockTranslation,
+        where: b.translation_unit_id in ^unit_ids,
+        distinct: b.translation_unit_id,
+        order_by: [
+          asc: b.translation_unit_id,
+          desc: b.updated_at,
+          desc: b.inserted_at,
+          desc: b.id
+        ]
+    )
+  end
 end
