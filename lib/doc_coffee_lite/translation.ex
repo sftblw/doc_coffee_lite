@@ -655,33 +655,25 @@ defmodule DocCoffeeLite.Translation do
   end
 
   defp do_bulk_replace(project_id, search, find_str, replace_str) do
-    # Get all latest block translations for filtered units
-    latest_bt_query =
-      from b in BlockTranslation,
-        distinct: b.translation_unit_id,
-        order_by: [asc: b.translation_unit_id, desc: b.inserted_at]
-
     query =
       from u in TranslationUnit,
         join: g in assoc(u, :translation_group),
         where: g.project_id == ^project_id,
-        preload: [block_translations: ^latest_bt_query]
+        preload: [:translation_group]
 
     units = query |> apply_review_search_filter(search) |> Repo.all()
+    unit_ids = Enum.map(units, & &1.id)
+
+    {run_id, run_translations, fallback_translations} =
+      prepare_bulk_replace_translations(project_id, unit_ids)
 
     Repo.transaction(fn ->
       Enum.each(units, fn unit ->
-        case get_latest_translation(unit) do
-          nil ->
-            :ok
+        bt =
+          Map.get(run_translations, unit.id) ||
+            Map.get(fallback_translations, unit.id)
 
-          bt ->
-            new_text = String.replace(bt.translated_text, find_str, replace_str)
-
-            if new_text != bt.translated_text do
-              update_block_translation(bt, %{translated_text: new_text})
-            end
-        end
+        replace_translation_for_run(run_id, unit, bt, find_str, replace_str)
       end)
     end)
   end
@@ -718,6 +710,99 @@ defmodule DocCoffeeLite.Translation do
       true ->
         attrs
     end
+  end
+
+  defp prepare_bulk_replace_translations(project_id, unit_ids) do
+    run = get_latest_run(project_id)
+    run_id = if run, do: run.id, else: nil
+    run_translations = fetch_run_translations(run_id, unit_ids)
+
+    fallback_translations =
+      if map_size(run_translations) == length(unit_ids) do
+        %{}
+      else
+        fetch_latest_translations(unit_ids, run_translations)
+      end
+
+    {run_id, run_translations, fallback_translations}
+  end
+
+  defp fetch_run_translations(nil, _unit_ids), do: %{}
+
+  defp fetch_run_translations(run_id, unit_ids) do
+    Repo.all(
+      from b in BlockTranslation,
+        where: b.translation_run_id == ^run_id and b.translation_unit_id in ^unit_ids
+    )
+    |> Map.new(&{&1.translation_unit_id, &1})
+  end
+
+  defp fetch_latest_translations(unit_ids, run_translations) do
+    missing_unit_ids =
+      unit_ids
+      |> Enum.reject(&Map.has_key?(run_translations, &1))
+
+    if missing_unit_ids == [] do
+      %{}
+    else
+      Repo.all(
+        from b in BlockTranslation,
+          where: b.translation_unit_id in ^missing_unit_ids,
+          distinct: b.translation_unit_id,
+          order_by: [
+            asc: b.translation_unit_id,
+            desc: b.updated_at,
+            desc: b.inserted_at,
+            desc: b.id
+          ]
+      )
+      |> Map.new(&{&1.translation_unit_id, &1})
+    end
+  end
+
+  defp replace_translation_for_run(_run_id, _unit, nil, _find_str, _replace_str), do: :ok
+
+  defp replace_translation_for_run(nil, _unit, bt, find_str, replace_str) do
+    new_text = String.replace(bt.translated_text || "", find_str, replace_str)
+
+    if new_text != (bt.translated_text || "") do
+      update_block_translation(bt, %{translated_text: new_text})
+    end
+  end
+
+  defp replace_translation_for_run(run_id, unit, bt, find_str, replace_str) do
+    new_text = String.replace(bt.translated_text || "", find_str, replace_str)
+
+    if new_text != (bt.translated_text || "") do
+      if bt.translation_run_id == run_id do
+        update_block_translation(bt, %{translated_text: new_text})
+      else
+        upsert_run_translation(run_id, unit, bt, new_text)
+      end
+    end
+  end
+
+  defp upsert_run_translation(run_id, unit, bt, new_text) do
+    placeholders = unit.placeholders || %{}
+
+    attrs = %{
+      translation_run_id: run_id,
+      translation_unit_id: unit.id,
+      status: bt.status || "edited",
+      translated_text: new_text,
+      translated_markup: Placeholder.restore(new_text, placeholders),
+      placeholders: placeholders,
+      llm_response: bt.llm_response || %{},
+      metrics: bt.metrics || %{},
+      metadata: Map.put(bt.metadata || %{}, "source", "bulk_replace_copy")
+    }
+
+    %BlockTranslation{}
+    |> BlockTranslation.changeset(attrs)
+    |> Repo.insert(
+      on_conflict: {:replace_all_except, [:id, :inserted_at]},
+      conflict_target: [:translation_run_id, :translation_unit_id]
+    )
   end
 
   def get_translation_run!(id), do: Repo.get!(TranslationRun, id)
