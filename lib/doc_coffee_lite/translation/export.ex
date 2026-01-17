@@ -6,7 +6,9 @@ defmodule DocCoffeeLite.Translation.Export do
   import Ecto.Query
   require Logger
   alias DocCoffeeLite.Repo
+  alias DocCoffeeLite.Epub
   alias DocCoffeeLite.Epub.Writer
+  alias DocCoffeeLite.Translation.Segmenter
 
   alias DocCoffeeLite.Translation.{
     Project,
@@ -21,8 +23,10 @@ defmodule DocCoffeeLite.Translation.Export do
     output_path = Path.expand(output_path)
 
     with {:ok, _run, _source} <- load_context(run_id),
-         {:ok, %{work_dir: work_dir}} <- assemble_translated_files(run_id, opts),
+         {:ok, %{work_dir: work_dir, cleanup?: cleanup?}} <-
+           assemble_translated_files(run_id, opts),
          :ok <- Writer.build(work_dir, output_path) do
+      if cleanup?, do: File.rm_rf(work_dir)
       :ok
     end
   end
@@ -31,9 +35,10 @@ defmodule DocCoffeeLite.Translation.Export do
     allow_missing? = Keyword.get(opts, :allow_missing?, false)
 
     with {:ok, run, source} <- load_context(run_id),
+         {:ok, work_dir} <- prepare_work_dir(source),
          groups <- fetch_groups(source.id),
-         :ok <- apply_groups(run.id, groups, source.work_dir, allow_missing?) do
-      {:ok, %{work_dir: source.work_dir, group_count: length(groups)}}
+         :ok <- apply_groups(run.id, groups, work_dir, allow_missing?) do
+      {:ok, %{work_dir: work_dir, group_count: length(groups), cleanup?: true}}
     end
   end
 
@@ -55,6 +60,16 @@ defmodule DocCoffeeLite.Translation.Export do
         where: g.source_document_id == ^source_document_id,
         order_by: [asc: g.position]
     )
+  end
+
+  defp prepare_work_dir(%SourceDocument{source_path: source_path}) do
+    work_dir = Path.join(System.tmp_dir!(), "export_work_#{Ecto.UUID.generate()}")
+
+    with :ok <- File.mkdir_p(work_dir),
+         {:ok, session} <- Epub.open(source_path, work_dir),
+         {:ok, _} <- Segmenter.segment(:epub, session) do
+      {:ok, work_dir}
+    end
   end
 
   defp apply_groups(run_id, groups, work_dir, allow_missing?) do
