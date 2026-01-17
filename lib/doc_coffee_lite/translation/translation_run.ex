@@ -31,5 +31,6 @@ defmodule DocCoffeeLite.Translation.TranslationRun do
       :completed_at
     ])
     |> validate_required([:status, :progress])
+    |> unique_constraint(:project_id)
   end
 end

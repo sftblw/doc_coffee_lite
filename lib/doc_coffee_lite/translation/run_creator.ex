@@ -3,6 +3,7 @@ defmodule DocCoffeeLite.Translation.RunCreator do
   Creates translation runs with policy and glossary snapshots.
   """
 
+  import Ecto.Query
   alias DocCoffeeLite.Repo
   alias DocCoffeeLite.Translation.TranslationRun
   alias DocCoffeeLite.Translation.PolicySnapshot
@@ -11,6 +12,13 @@ defmodule DocCoffeeLite.Translation.RunCreator do
 
   @spec create(String.t(), keyword()) :: {:ok, TranslationRun.t()} | {:error, term()}
   def create(project_id, opts \\ []) do
+    case latest_run(project_id) do
+      %TranslationRun{} = run -> {:ok, run}
+      nil -> create_new(project_id, opts)
+    end
+  end
+
+  defp create_new(project_id, opts) do
     run_status = Keyword.get(opts, :status, "draft")
     policy_opts = Keyword.get(opts, :policy_opts, [])
     glossary_opts = Keyword.get(opts, :glossary_opts, [])
@@ -35,7 +43,17 @@ defmodule DocCoffeeLite.Translation.RunCreator do
       |> TranslationRun.changeset(attrs)
       |> Repo.insert()
     end
+    |> handle_create_result(project_id)
   end
+
+  defp handle_create_result({:error, %Ecto.Changeset{} = changeset}, project_id) do
+    case latest_run(project_id) do
+      %TranslationRun{} = run -> {:ok, run}
+      nil -> {:error, changeset}
+    end
+  end
+
+  defp handle_create_result(result, _project_id), do: result
 
   defp resolve_llm_snapshot(project_id, :auto, opts) do
     LlmSelector.snapshot(project_id, opts)
@@ -49,4 +67,13 @@ defmodule DocCoffeeLite.Translation.RunCreator do
 
   defp resolve_llm_snapshot(_project_id, snapshot, _opts),
     do: {:error, {:invalid_llm_snapshot, snapshot}}
+
+  defp latest_run(project_id) do
+    Repo.one(
+      from r in TranslationRun,
+        where: r.project_id == ^project_id,
+        order_by: [desc: r.inserted_at],
+        limit: 1
+    )
+  end
 end

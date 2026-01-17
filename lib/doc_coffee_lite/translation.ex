@@ -14,6 +14,7 @@ defmodule DocCoffeeLite.Translation do
   alias DocCoffeeLite.Translation.TranslationUnit
   alias DocCoffeeLite.Translation.TranslationRun
   alias DocCoffeeLite.Translation.BlockTranslation
+  alias DocCoffeeLite.Translation.Placeholder
   alias DocCoffeeLite.Translation.PolicySet
   alias DocCoffeeLite.Translation.GlossaryTerm
   alias DocCoffeeLite.Translation.Workers.TranslationGroupWorker
@@ -478,7 +479,25 @@ defmodule DocCoffeeLite.Translation do
   def list_translation_runs, do: Repo.all(TranslationRun)
 
   def create_translation_run(attrs) do
-    %TranslationRun{} |> TranslationRun.changeset(attrs) |> Repo.insert()
+    project_id = Map.get(attrs, :project_id) || Map.get(attrs, "project_id")
+
+    %TranslationRun{}
+    |> TranslationRun.changeset(attrs)
+    |> Repo.insert()
+    |> case do
+      {:ok, %TranslationRun{} = run} ->
+        {:ok, run}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        if project_id && Keyword.has_key?(changeset.errors, :project_id) do
+          case get_latest_run(project_id) do
+            %TranslationRun{} = run -> {:ok, run}
+            nil -> {:error, changeset}
+          end
+        else
+          {:error, changeset}
+        end
+    end
   end
 
   def update_translation_run(%TranslationRun{} = run, attrs) do
@@ -675,9 +694,30 @@ defmodule DocCoffeeLite.Translation do
   end
 
   def update_block_translation(%BlockTranslation{} = bt, attrs) do
+    attrs = ensure_translated_markup(bt, attrs)
+
     bt
     |> BlockTranslation.changeset(attrs)
     |> Repo.update()
+  end
+
+  defp ensure_translated_markup(%BlockTranslation{} = bt, attrs) do
+    cond do
+      Map.has_key?(attrs, :translated_markup) or Map.has_key?(attrs, "translated_markup") ->
+        attrs
+
+      Map.has_key?(attrs, :translated_text) or Map.has_key?(attrs, "translated_text") ->
+        text = Map.get(attrs, :translated_text) || Map.get(attrs, "translated_text")
+
+        placeholders =
+          Map.get(attrs, :placeholders) || Map.get(attrs, "placeholders") || bt.placeholders ||
+            %{}
+
+        Map.put(attrs, :translated_markup, Placeholder.restore(text, placeholders))
+
+      true ->
+        attrs
+    end
   end
 
   def get_translation_run!(id), do: Repo.get!(TranslationRun, id)
