@@ -70,17 +70,24 @@ defmodule DocCoffeeLite.Translation.Export do
     units = Repo.all(from u in TranslationUnit, where: u.translation_group_id == ^group.id)
     unit_ids = Enum.map(units, & &1.id)
 
-    translations =
+    run_translations =
       run_id
       |> fetch_run_translations(unit_ids)
-      |> add_fallback_translations(unit_ids)
+      |> Map.new(&{&1.translation_unit_id, &1})
+
+    latest_translations =
+      unit_ids
+      |> fetch_latest_translations()
+      |> Map.new(&{&1.translation_unit_id, &1})
+
+    translations = select_translations(run_translations, latest_translations, unit_ids)
 
     # Map by unit_key (which contains the data-unit-id marker)
     units_map = Map.new(units, &{&1.id, &1})
 
     trans_map =
       translations
-      |> Enum.reduce(%{}, fn b, acc ->
+      |> Enum.reduce(%{}, fn {_unit_id, b}, acc ->
         case Map.get(units_map, b.translation_unit_id) do
           %TranslationUnit{} = unit -> Map.put(acc, unit.unit_key, b.translated_markup)
           _ -> acc
@@ -189,22 +196,6 @@ defmodule DocCoffeeLite.Translation.Export do
     )
   end
 
-  defp add_fallback_translations(run_translations, unit_ids) do
-    missing_unit_ids =
-      unit_ids
-      |> Enum.reject(&translation_present?(&1, run_translations))
-
-    if missing_unit_ids == [] do
-      run_translations
-    else
-      run_translations ++ fetch_latest_translations(missing_unit_ids)
-    end
-  end
-
-  defp translation_present?(unit_id, translations) do
-    Enum.any?(translations, &(&1.translation_unit_id == unit_id))
-  end
-
   defp fetch_latest_translations(unit_ids) do
     Repo.all(
       from b in BlockTranslation,
@@ -217,5 +208,37 @@ defmodule DocCoffeeLite.Translation.Export do
           desc: b.id
         ]
     )
+  end
+
+  defp select_translations(run_translations, latest_translations, unit_ids) do
+    Enum.reduce(unit_ids, %{}, fn unit_id, acc ->
+      run_bt = Map.get(run_translations, unit_id)
+      latest_bt = Map.get(latest_translations, unit_id)
+      chosen = pick_latest_translation(run_bt, latest_bt)
+
+      if chosen do
+        Map.put(acc, unit_id, chosen)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp pick_latest_translation(nil, latest), do: latest
+  defp pick_latest_translation(run, nil), do: run
+
+  defp pick_latest_translation(run, latest) do
+    run_ts = translation_timestamp(run)
+    latest_ts = translation_timestamp(latest)
+
+    case DateTime.compare(run_ts, latest_ts) do
+      :gt -> run
+      :lt -> latest
+      :eq -> if run.id >= latest.id, do: run, else: latest
+    end
+  end
+
+  defp translation_timestamp(%BlockTranslation{} = bt) do
+    bt.updated_at || bt.inserted_at
   end
 end
