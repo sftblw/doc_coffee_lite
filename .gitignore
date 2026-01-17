@@ -1,7 +1,8 @@
 # don't know why but 
 # undefined/elixir/1-19-otp-27/rebar3 appears
 undefined
-
+.mix
+.hex
 .env
 priv/uploads
 priv/work
