@@ -874,15 +874,22 @@ defmodule DocCoffeeLite.Translation do
   defp maybe_repair_markup(nil, _unit, acc), do: acc
 
   defp maybe_repair_markup(%BlockTranslation{} = bt, unit, acc) do
-    if markup_missing?(bt) and text_present?(bt) do
+    if text_present?(bt) do
       placeholders = bt.placeholders || unit.placeholders || %{}
+      new_markup = Placeholder.restore(bt.translated_text || "", placeholders)
+      current_markup = bt.translated_markup || ""
 
-      case update_block_translation(bt, %{
-             translated_text: bt.translated_text,
-             placeholders: placeholders
-           }) do
-        {:ok, _} -> bump_integrity(acc, :repaired_markup)
-        _ -> acc
+      if new_markup != current_markup do
+        case update_block_translation(bt, %{
+               translated_text: bt.translated_text,
+               translated_markup: new_markup,
+               placeholders: placeholders
+             }) do
+          {:ok, _} -> bump_integrity(acc, :repaired_markup)
+          _ -> acc
+        end
+      else
+        acc
       end
     else
       acc

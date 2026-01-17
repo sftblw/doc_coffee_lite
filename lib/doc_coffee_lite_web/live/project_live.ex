@@ -199,7 +199,7 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
     with %Project{} <- project,
          {:ok, report} <- Translation.check_project_integrity(project.id) do
       message =
-        "Integrity check: synced #{report.synced}, repaired #{report.repaired_markup}, " <>
+        "Integrity repair: synced #{report.synced}, repaired #{report.repaired_markup}, " <>
           "missing #{report.missing} (#{report.unit_count} units)."
 
       {:noreply, socket |> put_flash(:info, message) |> reload_project()}
@@ -379,7 +379,7 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
                 id="project-integrity-check"
                 phx-click="check_integrity"
                 class="p-2 text-stone-400 hover:text-emerald-600 transition-colors rounded-full hover:bg-emerald-50"
-                title="Check Export Integrity"
+                title="Repair Export Integrity"
               >
                 <.icon name="hero-check-circle" class="size-5" />
               </button>
