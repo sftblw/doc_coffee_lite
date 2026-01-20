@@ -60,37 +60,39 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen bg-[#f6f1ea] text-stone-900 p-10">
-      <header class="flex justify-between items-start mb-10">
-        <div>
-          <h1 class="text-3xl font-display">LLM Settings</h1>
-          <p class="text-stone-600">Configure models for project {@project && @project.title}</p>
-        </div>
-        <.link
-          navigate={~p"/projects/#{@project && @project.id}"}
-          class="border px-4 py-2 rounded-full"
-        >
-          Back
-        </.link>
-      </header>
-
-      <div class="grid gap-6">
-        <%= for usage_type <- @usage_types do %>
-          <div class="bg-white p-6 rounded-2xl border shadow-sm">
-            <h2 class="text-xl font-semibold mb-4">{String.capitalize(to_string(usage_type))}</h2>
-            <div class="grid sm:grid-cols-2 gap-4">
-              <%= for tier <- @tiers do %>
-                <.config_form
-                  usage_type={usage_type}
-                  tier={tier}
-                  config={Map.get(@configs, {usage_type, tier})}
-                />
-              <% end %>
-            </div>
+    <Layouts.app flash={@flash}>
+      <div class="min-h-screen bg-[#f6f1ea] text-stone-900 p-10 llm-settings">
+        <header class="flex justify-between items-start mb-10">
+          <div>
+            <h1 class="text-3xl font-display">LLM Settings</h1>
+            <p class="text-stone-600">Configure models for project {@project && @project.title}</p>
           </div>
-        <% end %>
+          <.link
+            navigate={~p"/projects/#{@project && @project.id}"}
+            class="border px-4 py-2 rounded-full"
+          >
+            Back
+          </.link>
+        </header>
+
+        <div class="grid gap-6">
+          <%= for usage_type <- @usage_types do %>
+            <div class="bg-white p-6 rounded-2xl border shadow-sm">
+              <h2 class="text-xl font-semibold mb-4">{String.capitalize(to_string(usage_type))}</h2>
+              <div class="grid sm:grid-cols-2 gap-4">
+                <%= for tier <- @tiers do %>
+                  <.config_form
+                    usage_type={usage_type}
+                    tier={tier}
+                    config={Map.get(@configs, {usage_type, tier})}
+                  />
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+        </div>
       </div>
-    </div>
+    </Layouts.app>
     """
   end
 

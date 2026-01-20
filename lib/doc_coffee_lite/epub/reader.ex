@@ -302,7 +302,7 @@ defmodule DocCoffeeLite.Epub.Reader do
     [path | _rest] = String.split(href, "#", parts: 2)
     path = String.trim(path)
 
-    with :ok <- EpubPath.validate_relative_path(path) do
+    with :ok <- validate_manifest_href(path) do
       full_path = Path.expand(Path.join(rootfile_dir, path), "/")
       relative_path = String.trim_leading(full_path, "/")
 
@@ -337,6 +337,27 @@ defmodule DocCoffeeLite.Epub.Reader do
     case Floki.parse_document(xml) do
       {:ok, doc} -> {:ok, doc}
       {:error, reason} -> {:error, {:xml_parse_error, reason}}
+    end
+  end
+
+  defp validate_manifest_href(path) do
+    normalized = String.replace(path, "\\", "/")
+
+    cond do
+      normalized in ["", "."] ->
+        {:error, :empty_path}
+
+      Elixir.Path.type(normalized) == :absolute ->
+        {:error, :absolute_path}
+
+      String.match?(normalized, ~r/^[A-Za-z]:/) ->
+        {:error, :absolute_path}
+
+      URI.parse(normalized).scheme != nil ->
+        {:error, :absolute_path}
+
+      true ->
+        :ok
     end
   end
 end

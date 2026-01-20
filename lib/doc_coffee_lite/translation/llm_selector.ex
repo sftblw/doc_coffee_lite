@@ -93,6 +93,7 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
   defp env_fallback do
     server_env = System.get_env("LIVE_LLM_SERVER")
     model = System.get_env("LIVE_LLM_MODEL")
+    api_key = System.get_env("LIVE_LLM_API_KEY")
 
     if server_env && model do
       # Support multiple servers separated by comma
@@ -110,7 +111,7 @@ defmodule DocCoffeeLite.Translation.LlmSelector do
         provider: "ollama",
         model: model,
         base_url: if(length(servers) == 1, do: List.first(servers), else: servers),
-        api_key: "ollama",
+        api_key: api_key || "ollama",
         settings: %{},
         inserted_at: DateTime.utc_now(),
         updated_at: DateTime.utc_now()

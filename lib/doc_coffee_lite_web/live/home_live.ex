@@ -174,129 +174,140 @@ defmodule DocCoffeeLiteWeb.HomeLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="relative min-h-screen overflow-hidden bg-[#f7f1e9] text-stone-900">
-      <div class="pointer-events-none absolute inset-0">
-        <div class="absolute -top-28 -left-24 h-72 w-72 rounded-full bg-amber-200/60 blur-3xl" />
-        <div class="absolute top-28 -right-28 h-96 w-96 rounded-full bg-emerald-200/40 blur-3xl" />
-        <div class="absolute bottom-0 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-orange-200/30 blur-3xl" />
-      </div>
+    <Layouts.app flash={@flash}>
+      <div class="relative min-h-screen overflow-hidden bg-[#f7f1e9] text-stone-900">
+        <div class="pointer-events-none absolute inset-0">
+          <div class="absolute -top-28 -left-24 h-72 w-72 rounded-full bg-amber-200/60 blur-3xl" />
+          <div class="absolute top-28 -right-28 h-96 w-96 rounded-full bg-emerald-200/40 blur-3xl" />
+          <div class="absolute bottom-0 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-orange-200/30 blur-3xl" />
+        </div>
 
-      <div class="relative z-10">
-        <header class="mx-auto flex max-w-6xl items-center justify-between px-6 py-8">
-          <div class="flex items-center gap-3">
-            <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-900 text-amber-100 shadow-sm">
-              <.icon name="hero-sparkles" class="size-5" />
+        <div class="relative z-10">
+          <header class="mx-auto flex max-w-6xl items-center justify-between px-6 py-8">
+            <div class="flex items-center gap-3">
+              <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-900 text-amber-100 shadow-sm">
+                <.icon name="hero-sparkles" class="size-5" />
+              </div>
+              <div>
+                <p class="font-display text-xl leading-none">DocCoffee Lite</p>
+                <p class="mt-1 text-[0.65rem] uppercase tracking-[0.28em] text-stone-500">
+                  EPUB translation studio
+                </p>
+              </div>
             </div>
-            <div>
-              <p class="font-display text-xl leading-none">DocCoffee Lite</p>
-              <p class="mt-1 text-[0.65rem] uppercase tracking-[0.28em] text-stone-500">
-                EPUB translation studio
-              </p>
+            <div class="flex items-center gap-3">
+              <.link
+                id="global-llm-settings-link"
+                navigate={~p"/settings/llm"}
+                class="rounded-full border border-stone-200 bg-white/80 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-stone-600 backdrop-blur transition hover:bg-white hover:text-stone-900"
+              >
+                LLM Settings
+              </.link>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <main class="mx-auto max-w-6xl px-6 pb-16">
-          <section class="grid gap-6 lg:grid-cols-12">
-            <div class="space-y-6 lg:col-span-7">
-              <div class="relative overflow-hidden rounded-3xl border border-stone-200/80 bg-white/80 p-8 shadow-sm backdrop-blur">
-                <div class="relative">
-                  <h1 class="font-display text-3xl leading-tight sm:text-4xl">
-                    Reader-ready EPUB translation.
-                  </h1>
-                  <p class="mt-3 text-sm text-stone-600 sm:text-base">
-                    Pure Ecto version. No Ash overhead.
-                  </p>
+          <main class="mx-auto max-w-6xl px-6 pb-16">
+            <section class="grid gap-6 lg:grid-cols-12">
+              <div class="space-y-6 lg:col-span-7">
+                <div class="relative overflow-hidden rounded-3xl border border-stone-200/80 bg-white/80 p-8 shadow-sm backdrop-blur">
+                  <div class="relative">
+                    <h1 class="font-display text-3xl leading-tight sm:text-4xl">
+                      Reader-ready EPUB translation.
+                    </h1>
+                    <p class="mt-3 text-sm text-stone-600 sm:text-base">
+                      Pure Ecto version. No Ash overhead.
+                    </p>
 
-                  <.form
-                    for={@form}
-                    id="new-project-form"
-                    phx-submit="create_project"
-                    phx-change="noop"
-                    class="mt-6 space-y-4"
-                  >
-                    <div class="space-y-2">
-                      <.live_file_input
-                        upload={@uploads.epub}
-                        class="w-full cursor-pointer rounded-2xl border-2 border-dashed border-stone-200 bg-white/80 p-8 text-sm text-stone-600"
-                      />
-
-                      <%= for entry <- @uploads.epub.entries do %>
-                        <div class="flex items-center justify-between gap-3 rounded-2xl border border-stone-200/70 bg-white/70 px-4 py-3 text-xs text-stone-600">
-                          <span class="font-semibold text-stone-700">{entry.client_name}</span>
-                          <span class="text-stone-400">{entry.progress}%</span>
-                        </div>
-                      <% end %>
-                    </div>
-
-                    <div class="flex flex-wrap items-center gap-3">
-                      <div class="min-w-[220px]">
-                        <label class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-400">
-                          Target lang
-                        </label>
-                        <.input
-                          name="upload[target_lang]"
-                          type="text"
-                          value={@target_lang}
-                          class="mt-2 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm"
+                    <.form
+                      for={@form}
+                      id="new-project-form"
+                      phx-submit="create_project"
+                      phx-change="noop"
+                      class="mt-6 space-y-4"
+                    >
+                      <div class="space-y-2">
+                        <.live_file_input
+                          upload={@uploads.epub}
+                          class="w-full cursor-pointer rounded-2xl border-2 border-dashed border-stone-200 bg-white/80 p-8 text-sm text-stone-600"
                         />
+
+                        <%= for entry <- @uploads.epub.entries do %>
+                          <div class="flex items-center justify-between gap-3 rounded-2xl border border-stone-200/70 bg-white/70 px-4 py-3 text-xs text-stone-600">
+                            <span class="font-semibold text-stone-700">{entry.client_name}</span>
+                            <span class="text-stone-400">{entry.progress}%</span>
+                          </div>
+                        <% end %>
                       </div>
 
-                      <button
-                        type="submit"
-                        disabled={@uploads.epub.entries == []}
-                        class="mt-6 inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-white"
-                      >
-                        Create project <.icon name="hero-plus" class="size-4" />
-                      </button>
-                    </div>
-                  </.form>
-                </div>
-              </div>
-            </div>
-
-            <div class="space-y-6 lg:col-span-5">
-              <div class="rounded-3xl border border-stone-200/80 bg-white/85 p-6 shadow-sm backdrop-blur">
-                <div class="flex items-center justify-between mb-5">
-                  <h2 class="font-display text-xl">Recent projects</h2>
-                  <.link
-                    navigate={~p"/projects"}
-                    class="text-xs font-semibold uppercase tracking-wider text-stone-500 hover:text-stone-900"
-                  >
-                    View all
-                  </.link>
-                </div>
-                <div class="space-y-4">
-                  <%= for project <- @projects do %>
-                    <div class="group rounded-2xl border border-stone-200/80 bg-white/70 p-4 transition hover:shadow-lg">
-                      <div class="flex items-start justify-between gap-4">
-                        <div>
-                          <h3 class="text-base font-semibold text-stone-900">{project.title}</h3>
-                          <p class="mt-1 text-xs text-stone-500">
-                            {project.source} -> {project.target}
-                          </p>
+                      <div class="flex flex-wrap items-center gap-3">
+                        <div class="min-w-[220px]">
+                          <label class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-400">
+                            Target lang
+                          </label>
+                          <.input
+                            name="upload[target_lang]"
+                            type="text"
+                            value={@target_lang}
+                            class="mt-2 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm"
+                          />
                         </div>
-                        <span class={"inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold uppercase #{project.status_classes}"}>
-                          {project.status_label}
-                        </span>
-                      </div>
-                      <div class="mt-4 flex items-center justify-end gap-2">
-                        <.link
-                          navigate={~p"/projects/#{project.id}"}
-                          class="rounded-full border border-stone-200 bg-white px-3 py-1 text-xs font-semibold uppercase"
+
+                        <button
+                          type="submit"
+                          disabled={@uploads.epub.entries == []}
+                          class="mt-6 inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-white"
                         >
-                          Details
-                        </.link>
+                          Create project <.icon name="hero-plus" class="size-4" />
+                        </button>
                       </div>
-                    </div>
-                  <% end %>
+                    </.form>
+                  </div>
                 </div>
               </div>
-            </div>
-          </section>
-        </main>
+
+              <div class="space-y-6 lg:col-span-5">
+                <div class="rounded-3xl border border-stone-200/80 bg-white/85 p-6 shadow-sm backdrop-blur">
+                  <div class="flex items-center justify-between mb-5">
+                    <h2 class="font-display text-xl">Recent projects</h2>
+                    <.link
+                      navigate={~p"/projects"}
+                      class="text-xs font-semibold uppercase tracking-wider text-stone-500 hover:text-stone-900"
+                    >
+                      View all
+                    </.link>
+                  </div>
+                  <div class="space-y-4">
+                    <%= for project <- @projects do %>
+                      <div class="group rounded-2xl border border-stone-200/80 bg-white/70 p-4 transition hover:shadow-lg">
+                        <div class="flex items-start justify-between gap-4">
+                          <div>
+                            <h3 class="text-base font-semibold text-stone-900">{project.title}</h3>
+                            <p class="mt-1 text-xs text-stone-500">
+                              {project.source} -> {project.target}
+                            </p>
+                          </div>
+                          <span class={"inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold uppercase #{project.status_classes}"}>
+                            {project.status_label}
+                          </span>
+                        </div>
+                        <div class="mt-4 flex items-center justify-end gap-2">
+                          <.link
+                            navigate={~p"/projects/#{project.id}"}
+                            class="rounded-full border border-stone-200 bg-white px-3 py-1 text-xs font-semibold uppercase"
+                          >
+                            Details
+                          </.link>
+                        </div>
+                      </div>
+                    <% end %>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </main>
+        </div>
       </div>
-    </div>
+    </Layouts.app>
     """
   end
 end

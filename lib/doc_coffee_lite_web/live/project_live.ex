@@ -327,8 +327,16 @@ defmodule DocCoffeeLiteWeb.ProjectLive do
             </div>
 
             <div class="flex flex-wrap items-center gap-2">
-              
-    <!-- Start/Pause Group -->
+              <.link
+                :if={@project}
+                id="project-llm-settings-link"
+                navigate={~p"/projects/#{@project.id}/llm"}
+                class="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-bold uppercase text-stone-700 shadow-sm transition hover:bg-stone-50"
+                title="Project LLM Settings"
+              >
+                <.icon name="hero-adjustments-horizontal" class="size-4" /> LLM Settings
+              </.link>
+              <%!-- Start/Pause Group --%>
 
               <button
                 :if={@project && can_start?(@project, latest_run(@project))}

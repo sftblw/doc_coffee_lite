@@ -471,3 +471,16 @@ body {
     animation: none;
   }
 }
+
+.llm-settings .input,
+.llm-settings .select,
+.llm-settings .textarea {
+  background-color: #ffffff;
+  border-color: #e7e5e4;
+  color: #1c1917;
+}
+
+.llm-settings .input::placeholder,
+.llm-settings .textarea::placeholder {
+  color: #a8a29e;
+}

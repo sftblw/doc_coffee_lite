@@ -71,6 +71,7 @@ Create a `.env` file in the project root:
 # LLM Server(s) - Comma-separated for load balancing
 LIVE_LLM_SERVER="http://192.168.1.10:11434,http://192.168.1.11:11434"
 LIVE_LLM_MODEL="gpt-oss:20b"
+LIVE_LLM_API_KEY="sk-or-..."
 
 # Worker Concurrency
 OBAN_CONCURRENCY=3
