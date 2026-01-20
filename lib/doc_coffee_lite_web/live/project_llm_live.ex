@@ -97,22 +97,35 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
   end
 
   defp config_form(assigns) do
+    assigns = assign(assigns, :form, build_config_form(assigns))
+
     ~H"""
-    <form phx-submit="save" class="p-4 border rounded-xl bg-stone-50">
+    <.form
+      for={@form}
+      id={"llm-config-#{@usage_type}-#{@tier}"}
+      phx-submit="save"
+      class="p-4 border rounded-xl bg-stone-50"
+    >
       <h3 class="font-semibold mb-3">{String.capitalize(to_string(@tier))} Tier</h3>
-      <input type="hidden" name="config[usage_type]" value={@usage_type} />
-      <input type="hidden" name="config[tier]" value={@tier} />
+      <.input field={@form[:usage_type]} type="hidden" value={@usage_type} />
+      <.input field={@form[:tier]} type="hidden" value={@tier} />
       <div class="space-y-3">
-        <.input name="config[name]" label="Name" value={@config && @config.name} required />
-        <.input name="config[provider]" label="Provider" value={@config && @config.provider} required />
-        <.input name="config[model]" label="Model" value={@config && @config.model} required />
-        <.input name="config[base_url]" label="Base URL" value={@config && @config.base_url} />
-        <.input name="config[api_key]" label="API Key" value={@config && @config.api_key} />
+        <.input field={@form[:name]} label="Name" required />
+        <.input field={@form[:provider]} label="Provider" required />
+        <.input field={@form[:model]} label="Model" required />
+        <.input field={@form[:base_url]} label="Base URL" />
+        <.input field={@form[:api_key]} label="API Key" />
+        <.input
+          field={@form[:batch_max_chars]}
+          type="number"
+          label="Max Batch Chars"
+          min="1"
+        />
       </div>
       <button type="submit" class="mt-4 w-full bg-stone-900 text-white py-2 rounded-lg text-sm">
         Save
       </button>
-    </form>
+    </.form>
     """
   end
 
@@ -141,6 +154,8 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
             c.project_id == ^project_id and c.usage_type == ^usage_type_s and c.tier == ^tier_s
       )
 
+    settings = merge_settings(existing && existing.settings, params)
+
     attrs = %{
       project_id: project_id,
       usage_type: usage_type_s,
@@ -150,6 +165,7 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
       model: params["model"],
       base_url: params["base_url"],
       api_key: params["api_key"],
+      settings: settings,
       active: true
     }
 
@@ -163,4 +179,50 @@ defmodule DocCoffeeLiteWeb.ProjectLlmLive do
     val = params[key]
     if val, do: {:ok, String.to_existing_atom(val)}, else: {:error, :missing}
   end
+
+  defp build_config_form(%{usage_type: usage_type, tier: tier, config: config}) do
+    settings = if config, do: config.settings || %{}, else: %{}
+
+    to_form(
+      %{
+        "usage_type" => to_string(usage_type),
+        "tier" => to_string(tier),
+        "name" => config && config.name,
+        "provider" => config && config.provider,
+        "model" => config && config.model,
+        "base_url" => config && config.base_url,
+        "api_key" => config && config.api_key,
+        "batch_max_chars" => Map.get(settings, "batch_max_chars")
+      },
+      as: :config
+    )
+  end
+
+  defp merge_settings(existing, params) do
+    existing = normalize_settings(existing)
+
+    existing
+    |> put_optional_int("batch_max_chars", params["batch_max_chars"])
+  end
+
+  defp normalize_settings(%{} = settings), do: settings
+  defp normalize_settings(_), do: %{}
+
+  defp put_optional_int(settings, key, value) do
+    case parse_int(value) do
+      nil -> Map.delete(settings, key)
+      int -> Map.put(settings, key, int)
+    end
+  end
+
+  defp parse_int(value) when is_integer(value) and value > 0, do: value
+
+  defp parse_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _} when int > 0 -> int
+      _ -> nil
+    end
+  end
+
+  defp parse_int(_), do: nil
 end

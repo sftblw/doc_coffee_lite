@@ -28,11 +28,10 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"run_id" => run_id, "group_id" => group_id} = args}) do
     # 1. Configuration from Env
-    max_units = String.to_integer(System.get_env("LLM_BATCH_MAX_UNITS", "500"))
-    max_chars = String.to_integer(System.get_env("LLM_BATCH_MAX_CHARS", "4000"))
     strategy = Map.get(args, "strategy", "noop")
 
     with {:ok, run, group, project} <- load_state(run_id, group_id),
+         {max_units, max_chars} <- batch_limits(run),
          {:ok, group} <- ensure_active(run, group, project) do
       # 2. Ensure group is marked as running
       {:ok, group} = ensure_group_running(group)
@@ -96,6 +95,49 @@ defmodule DocCoffeeLite.Translation.Workers.TranslationGroupWorker do
     end)
     |> then(fn {acc, _} -> {acc, units -- acc} end)
   end
+
+  defp batch_limits(run) do
+    default_units = env_int("LLM_BATCH_MAX_UNITS", 500)
+    default_chars = env_int("LLM_BATCH_MAX_CHARS", 4000)
+    settings = llm_settings(run.llm_config_snapshot, :translate)
+
+    max_units = setting_int(settings, "batch_max_units") || default_units
+    max_chars = setting_int(settings, "batch_max_chars") || default_chars
+
+    {max_units, max_chars}
+  end
+
+  defp llm_settings(%{"configs" => configs}, usage_type) do
+    type_config = Map.get(configs, to_string(usage_type), %{})
+    config = Map.get(type_config, "cheap") || Map.get(type_config, "expensive") || %{}
+    Map.get(config, "settings") || %{}
+  end
+
+  defp llm_settings(_, _usage_type), do: %{}
+
+  defp env_int(key, default) do
+    key
+    |> System.get_env()
+    |> setting_int()
+    |> case do
+      nil -> default
+      value -> value
+    end
+  end
+
+  defp setting_int(%{} = settings, key), do: settings |> Map.get(key) |> setting_int()
+  defp setting_int(_settings, _key), do: nil
+
+  defp setting_int(value) when is_integer(value) and value > 0, do: value
+
+  defp setting_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _} when int > 0 -> int
+      _ -> nil
+    end
+  end
+
+  defp setting_int(_), do: nil
 
   defp process_true_batch(run, group, units, "llm", project) do
     # 1. Mark all as translating

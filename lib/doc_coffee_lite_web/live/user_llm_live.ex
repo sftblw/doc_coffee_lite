@@ -13,12 +13,14 @@ defmodule DocCoffeeLiteWeb.UserLlmLive do
     {:ok,
      socket
      |> assign(:page_title, "Global LLM Settings")
-     |> assign(:fallback, fallback)}
+     |> assign(:fallback, fallback)
+     |> assign(:fallback_form, build_fallback_form(fallback))}
   end
 
   @impl true
   def handle_event("save_fallback", %{"fallback" => params}, socket) do
     existing = socket.assigns.fallback
+    settings = merge_settings(existing && existing.settings, params)
 
     attrs = %{
       name: params["name"],
@@ -26,6 +28,7 @@ defmodule DocCoffeeLiteWeb.UserLlmLive do
       model: params["model"],
       base_url: params["base_url"],
       api_key: params["api_key"],
+      settings: settings,
       fallback: true,
       active: true,
       usage_type: "translate",
@@ -38,7 +41,11 @@ defmodule DocCoffeeLiteWeb.UserLlmLive do
     end
     |> case do
       {:ok, config} ->
-        {:noreply, socket |> assign(:fallback, config) |> put_flash(:info, "Saved")}
+        {:noreply,
+         socket
+         |> assign(:fallback, config)
+         |> assign(:fallback_form, build_fallback_form(config))
+         |> put_flash(:info, "Saved")}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Failed to save")}
@@ -60,28 +67,29 @@ defmodule DocCoffeeLiteWeb.UserLlmLive do
 
         <section class="bg-white p-8 rounded-3xl border shadow-sm max-w-2xl">
           <h2 class="text-2xl mb-6 font-display">Default Model (Fallback)</h2>
-          <.form for={%{}} as={:fallback} phx-submit="save_fallback" class="space-y-4">
+          <.form
+            for={@fallback_form}
+            id="global-llm-form"
+            phx-submit="save_fallback"
+            class="space-y-4"
+          >
             <div class="grid grid-cols-2 gap-4">
-              <.input name="fallback[name]" label="Name" value={@fallback && @fallback.name} required />
+              <.input field={@fallback_form[:name]} label="Name" required />
               <.input
-                name="fallback[provider]"
+                field={@fallback_form[:provider]}
                 label="Provider"
-                value={@fallback && @fallback.provider}
                 required
               />
             </div>
+            <.input field={@fallback_form[:model]} label="Model" required />
+            <.input field={@fallback_form[:base_url]} label="Base URL" />
+            <.input field={@fallback_form[:api_key]} label="API Key" />
             <.input
-              name="fallback[model]"
-              label="Model"
-              value={@fallback && @fallback.model}
-              required
+              field={@fallback_form[:batch_max_chars]}
+              type="number"
+              label="Max Batch Chars"
+              min="1"
             />
-            <.input
-              name="fallback[base_url]"
-              label="Base URL"
-              value={@fallback && @fallback.base_url}
-            />
-            <.input name="fallback[api_key]" label="API Key" value={@fallback && @fallback.api_key} />
 
             <button
               type="submit"
@@ -95,4 +103,50 @@ defmodule DocCoffeeLiteWeb.UserLlmLive do
     </Layouts.app>
     """
   end
+
+  defp build_fallback_form(nil), do: to_form(%{}, as: :fallback)
+
+  defp build_fallback_form(%LlmConfig{} = fallback) do
+    settings = fallback.settings || %{}
+
+    to_form(
+      %{
+        "name" => fallback.name,
+        "provider" => fallback.provider,
+        "model" => fallback.model,
+        "base_url" => fallback.base_url,
+        "api_key" => fallback.api_key,
+        "batch_max_chars" => Map.get(settings, "batch_max_chars")
+      },
+      as: :fallback
+    )
+  end
+
+  defp merge_settings(existing, params) do
+    existing = normalize_settings(existing)
+
+    existing
+    |> put_optional_int("batch_max_chars", params["batch_max_chars"])
+  end
+
+  defp normalize_settings(%{} = settings), do: settings
+  defp normalize_settings(_), do: %{}
+
+  defp put_optional_int(settings, key, value) do
+    case parse_int(value) do
+      nil -> Map.delete(settings, key)
+      int -> Map.put(settings, key, int)
+    end
+  end
+
+  defp parse_int(value) when is_integer(value) and value > 0, do: value
+
+  defp parse_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _} when int > 0 -> int
+      _ -> nil
+    end
+  end
+
+  defp parse_int(_), do: nil
 end
